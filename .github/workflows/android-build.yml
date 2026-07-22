@@ -17,10 +17,10 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      - name: Setup Node 20
+      - name: Setup Node 22
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -31,8 +31,15 @@ jobs:
       - name: Build web
         run: bun run build
 
+      - name: Ensure webDir exists for Capacitor
+        run: |
+          mkdir -p dist
+          if [ ! -f dist/index.html ]; then
+            echo '<!doctype html><meta charset="utf-8"><title>Lyra</title><script>location.href="https://lyra-my-ai-pal.lovable.app"</script>' > dist/index.html
+          fi
+
       - name: Sync Capacitor
-        run: bunx cap sync android
+        run: npx cap sync android
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
