@@ -4,13 +4,14 @@ import { defineConfig } from "vite";
 import tsConfigPaths from "vite-tsconfig-paths";
 
 export default defineConfig({
-  root: ".",
+  root: "mobile",
+  envDir: "..",
   plugins: [react(), tailwindcss(), tsConfigPaths()],
   build: {
     rollupOptions: {
-      input: "mobile/index.html",
+      input: "index.html",
     },
-    outDir: "dist",
+    outDir: "../dist",
     emptyOutDir: true,
   },
 });
