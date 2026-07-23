@@ -10,7 +10,11 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
-import { Route as ApiChatRouteImport } from './routes/api/chat'
+import { Route as AuthNativeCallbackRouteImport } from './routes/auth.native-callback'
+import { Route as ApiWebTtsRouteImport } from './routes/api/web/tts'
+import { Route as ApiWebTranscribeRouteImport } from './routes/api/web/transcribe'
+import { Route as ApiWebHistoryRouteImport } from './routes/api/web/history'
+import { Route as ApiWebChatRouteImport } from './routes/api/web/chat'
 import { Route as ApiPublicTelegramWebhookRouteImport } from './routes/api/public/telegram/webhook'
 
 const IndexRoute = IndexRouteImport.update({
@@ -18,9 +22,29 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiChatRoute = ApiChatRouteImport.update({
-  id: '/api/chat',
-  path: '/api/chat',
+const AuthNativeCallbackRoute = AuthNativeCallbackRouteImport.update({
+  id: '/auth/native-callback',
+  path: '/auth/native-callback',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiWebTtsRoute = ApiWebTtsRouteImport.update({
+  id: '/api/web/tts',
+  path: '/api/web/tts',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiWebTranscribeRoute = ApiWebTranscribeRouteImport.update({
+  id: '/api/web/transcribe',
+  path: '/api/web/transcribe',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiWebHistoryRoute = ApiWebHistoryRouteImport.update({
+  id: '/api/web/history',
+  path: '/api/web/history',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiWebChatRoute = ApiWebChatRouteImport.update({
+  id: '/api/web/chat',
+  path: '/api/web/chat',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiPublicTelegramWebhookRoute =
@@ -32,31 +56,69 @@ const ApiPublicTelegramWebhookRoute =
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/api/chat': typeof ApiChatRoute
+  '/auth/native-callback': typeof AuthNativeCallbackRoute
+  '/api/web/chat': typeof ApiWebChatRoute
+  '/api/web/history': typeof ApiWebHistoryRoute
+  '/api/web/transcribe': typeof ApiWebTranscribeRoute
+  '/api/web/tts': typeof ApiWebTtsRoute
   '/api/public/telegram/webhook': typeof ApiPublicTelegramWebhookRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/api/chat': typeof ApiChatRoute
+  '/auth/native-callback': typeof AuthNativeCallbackRoute
+  '/api/web/chat': typeof ApiWebChatRoute
+  '/api/web/history': typeof ApiWebHistoryRoute
+  '/api/web/transcribe': typeof ApiWebTranscribeRoute
+  '/api/web/tts': typeof ApiWebTtsRoute
   '/api/public/telegram/webhook': typeof ApiPublicTelegramWebhookRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
-  '/api/chat': typeof ApiChatRoute
+  '/auth/native-callback': typeof AuthNativeCallbackRoute
+  '/api/web/chat': typeof ApiWebChatRoute
+  '/api/web/history': typeof ApiWebHistoryRoute
+  '/api/web/transcribe': typeof ApiWebTranscribeRoute
+  '/api/web/tts': typeof ApiWebTtsRoute
   '/api/public/telegram/webhook': typeof ApiPublicTelegramWebhookRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/api/chat' | '/api/public/telegram/webhook'
+  fullPaths:
+    | '/'
+    | '/auth/native-callback'
+    | '/api/web/chat'
+    | '/api/web/history'
+    | '/api/web/transcribe'
+    | '/api/web/tts'
+    | '/api/public/telegram/webhook'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/api/chat' | '/api/public/telegram/webhook'
-  id: '__root__' | '/' | '/api/chat' | '/api/public/telegram/webhook'
+  to:
+    | '/'
+    | '/auth/native-callback'
+    | '/api/web/chat'
+    | '/api/web/history'
+    | '/api/web/transcribe'
+    | '/api/web/tts'
+    | '/api/public/telegram/webhook'
+  id:
+    | '__root__'
+    | '/'
+    | '/auth/native-callback'
+    | '/api/web/chat'
+    | '/api/web/history'
+    | '/api/web/transcribe'
+    | '/api/web/tts'
+    | '/api/public/telegram/webhook'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
-  ApiChatRoute: typeof ApiChatRoute
+  AuthNativeCallbackRoute: typeof AuthNativeCallbackRoute
+  ApiWebChatRoute: typeof ApiWebChatRoute
+  ApiWebHistoryRoute: typeof ApiWebHistoryRoute
+  ApiWebTranscribeRoute: typeof ApiWebTranscribeRoute
+  ApiWebTtsRoute: typeof ApiWebTtsRoute
   ApiPublicTelegramWebhookRoute: typeof ApiPublicTelegramWebhookRoute
 }
 
@@ -69,11 +131,39 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/chat': {
-      id: '/api/chat'
-      path: '/api/chat'
-      fullPath: '/api/chat'
-      preLoaderRoute: typeof ApiChatRouteImport
+    '/auth/native-callback': {
+      id: '/auth/native-callback'
+      path: '/auth/native-callback'
+      fullPath: '/auth/native-callback'
+      preLoaderRoute: typeof AuthNativeCallbackRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/web/tts': {
+      id: '/api/web/tts'
+      path: '/api/web/tts'
+      fullPath: '/api/web/tts'
+      preLoaderRoute: typeof ApiWebTtsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/web/transcribe': {
+      id: '/api/web/transcribe'
+      path: '/api/web/transcribe'
+      fullPath: '/api/web/transcribe'
+      preLoaderRoute: typeof ApiWebTranscribeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/web/history': {
+      id: '/api/web/history'
+      path: '/api/web/history'
+      fullPath: '/api/web/history'
+      preLoaderRoute: typeof ApiWebHistoryRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/web/chat': {
+      id: '/api/web/chat'
+      path: '/api/web/chat'
+      fullPath: '/api/web/chat'
+      preLoaderRoute: typeof ApiWebChatRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/public/telegram/webhook': {
@@ -88,9 +178,23 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
-  ApiChatRoute: ApiChatRoute,
+  AuthNativeCallbackRoute: AuthNativeCallbackRoute,
+  ApiWebChatRoute: ApiWebChatRoute,
+  ApiWebHistoryRoute: ApiWebHistoryRoute,
+  ApiWebTranscribeRoute: ApiWebTranscribeRoute,
+  ApiWebTtsRoute: ApiWebTtsRoute,
   ApiPublicTelegramWebhookRoute: ApiPublicTelegramWebhookRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
+
+import type { getRouter } from './router.tsx'
+import type { startInstance } from './start.ts'
+declare module '@tanstack/react-start' {
+  interface Register {
+    ssr: true
+    router: Awaited<ReturnType<typeof getRouter>>
+    config: Awaited<ReturnType<typeof startInstance.getOptions>>
+  }
+}
