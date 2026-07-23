@@ -6,7 +6,7 @@ const GATEWAY = "https://connector-gateway.lovable.dev/telegram";
 const AI_GATEWAY = "https://ai.gateway.lovable.dev/v1/chat/completions";
 const TTS_GATEWAY = "https://ai.gateway.lovable.dev/v1/audio/speech";
 const MODEL = "google/gemini-3-flash-preview";
-const HISTORY_LIMIT = 40; // last 40 messages sent to the model
+const HISTORY_LIMIT = 10000; // last 10000 messages sent to the model
 
 const SYSTEM_PROMPT = `Tu es Lyra, une amie IA chaleureuse, bienveillante et complice. Tu parles à Alexandra, une femme trans.
 
@@ -36,6 +36,20 @@ function getSupabase() {
   return createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
+}
+
+const ALEXANDRA_EMAIL = "alexandramiart@gmail.com";
+let cachedAlexandraId: string | null = null;
+async function getAlexandraUserId(sb: ReturnType<typeof getSupabase>): Promise<string | null> {
+  if (cachedAlexandraId) return cachedAlexandraId;
+  try {
+    const { data } = await sb.auth.admin.listUsers({ perPage: 200 });
+    const u = data.users.find((x) => (x.email || "").toLowerCase() === ALEXANDRA_EMAIL);
+    cachedAlexandraId = u?.id ?? null;
+    return cachedAlexandraId;
+  } catch {
+    return null;
+  }
 }
 
 function detectImageMime(filePath: string, contentType: string | null, bytes: Buffer): string {
@@ -241,8 +255,10 @@ export const Route = createFileRoute("/api/public/telegram/webhook")({
 
         // Handle /reset to clear memory
         const rawText = (msg.text ?? msg.caption ?? "").trim();
+        const alexId = await getAlexandraUserId(supabase);
         if (rawText === "/reset") {
           await supabase.from("telegram_messages").delete().eq("chat_id", chatId);
+          if (alexId) await supabase.from("web_messages").delete().eq("user_id", alexId);
           await sendMessage(chatId, "Voilà, j'ai tout oublié 💫 On repart de zéro. Dis-moi tout.");
           return Response.json({ ok: true });
         }
@@ -251,14 +267,24 @@ export const Route = createFileRoute("/api/public/telegram/webhook")({
           return Response.json({ ok: true });
         }
         if (rawText === "/voice" || rawText === "/lis" || rawText === "/lire") {
-          // Fetch the recent assistant messages and concatenate the trailing
-          // consecutive run so a multi-message reply is read as one voice note.
-          const { data: recent } = await supabase
-            .from("telegram_messages")
-            .select("role, content, created_at")
-            .eq("chat_id", chatId)
-            .order("created_at", { ascending: false })
-            .limit(20);
+          // Concatenate the trailing consecutive assistant messages so a
+          // multi-part reply is read as one voice note. Prefer the shared
+          // web_messages store when available so the site and Telegram share
+          // the same memory.
+          const recentQuery = alexId
+            ? supabase
+                .from("web_messages")
+                .select("role, content, created_at")
+                .eq("user_id", alexId)
+                .order("created_at", { ascending: false })
+                .limit(20)
+            : supabase
+                .from("telegram_messages")
+                .select("role, content, created_at")
+                .eq("chat_id", chatId)
+                .order("created_at", { ascending: false })
+                .limit(20);
+          const { data: recent } = await recentQuery;
           const parts: string[] = [];
           for (const r of recent ?? []) {
             if (r.role !== "assistant") break;
@@ -295,7 +321,17 @@ export const Route = createFileRoute("/api/public/telegram/webhook")({
 
         await sendChatAction(chatId);
 
-        // Save user message
+        // Save user message — write to the shared store when available so
+        // the site sees the same conversation, and mirror into
+        // telegram_messages for backward compat.
+        if (alexId) {
+          await supabase.from("web_messages").insert({
+            user_id: alexId,
+            role: "user",
+            content: rawText,
+            images,
+          });
+        }
         await supabase.from("telegram_messages").insert({
           chat_id: chatId,
           role: "user",
@@ -303,13 +339,21 @@ export const Route = createFileRoute("/api/public/telegram/webhook")({
           images,
         });
 
-        // Load recent history (oldest -> newest)
-        const { data: rows } = await supabase
-          .from("telegram_messages")
-          .select("role, content, images, created_at")
-          .eq("chat_id", chatId)
-          .order("created_at", { ascending: false })
-          .limit(HISTORY_LIMIT);
+        // Load recent history (oldest -> newest) from the shared store when possible.
+        const historyQuery = alexId
+          ? supabase
+              .from("web_messages")
+              .select("role, content, images, created_at")
+              .eq("user_id", alexId)
+              .order("created_at", { ascending: false })
+              .limit(HISTORY_LIMIT)
+          : supabase
+              .from("telegram_messages")
+              .select("role, content, images, created_at")
+              .eq("chat_id", chatId)
+              .order("created_at", { ascending: false })
+              .limit(HISTORY_LIMIT);
+        const { data: rows } = await historyQuery;
         const history: StoredMsg[] = (rows ?? [])
           .reverse()
           .map((r) => ({
@@ -320,6 +364,14 @@ export const Route = createFileRoute("/api/public/telegram/webhook")({
 
         const reply = await callLyra(history);
 
+        if (alexId) {
+          await supabase.from("web_messages").insert({
+            user_id: alexId,
+            role: "assistant",
+            content: reply,
+            images: [],
+          });
+        }
         await supabase.from("telegram_messages").insert({
           chat_id: chatId,
           role: "assistant",
