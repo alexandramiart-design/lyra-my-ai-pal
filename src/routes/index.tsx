@@ -11,7 +11,7 @@ const lyraAvatar = lyraAvatarAsset.url;
 const alexandraAvatar = userAvatarAsset.url;
 
 const ALLOWED_EMAIL = "alexandramiart@gmail.com";
-const PUBLIC_APP_URL = "https://lyra-my-ai-pal.lovable.app";
+const PUBLIC_APP_URL = "https://sweet-git-sparkle.lovable.app";
 const NATIVE_AUTH_REDIRECT = "app.lovable.lyra://auth-callback";
 const NATIVE_AUTH_WEB_CALLBACK = `${PUBLIC_APP_URL}/auth/native-callback`;
 
@@ -63,15 +63,20 @@ async function handleNativeOAuthCallback(url: string) {
 }
 
 async function signInNativeGoogle() {
-  const state = crypto.randomUUID();
-  window.localStorage.setItem("lyra-native-oauth-state", state);
-  const params = new URLSearchParams({
+  // Demande directement l'URL OAuth à Supabase puis ouvre le navigateur natif.
+  // Après consentement, Supabase redirige vers NATIVE_AUTH_WEB_CALLBACK
+  // qui renvoie le deep link `app.lovable.lyra://auth-callback?code=...` dans l'app.
+  const { data, error } = await supabase.auth.signInWithOAuth({
     provider: "google",
-    redirect_uri: NATIVE_AUTH_WEB_CALLBACK,
-    state,
+    options: {
+      redirectTo: NATIVE_AUTH_WEB_CALLBACK,
+      skipBrowserRedirect: true,
+    },
   });
+  if (error) throw error;
+  if (!data?.url) throw new Error("URL OAuth introuvable");
   const { Browser } = await import("@capacitor/browser");
-  await Browser.open({ url: `${PUBLIC_APP_URL}/~oauth/initiate?${params.toString()}` });
+  await Browser.open({ url: data.url, presentationStyle: "popover" });
 }
 
 export const Route = createFileRoute("/")({
