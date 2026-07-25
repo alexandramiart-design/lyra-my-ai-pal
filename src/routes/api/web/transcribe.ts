@@ -1,12 +1,12 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { requireAlexandra, webCorsPreflight, withWebCors } from "@/lib/web-auth";
+import { requireAuthenticated, webCorsPreflight, withWebCors } from "@/lib/web-auth";
 
 export const Route = createFileRoute("/api/web/transcribe")({
   server: {
     handlers: {
       OPTIONS: async () => webCorsPreflight(),
       POST: async ({ request }) => {
-        const auth = await requireAlexandra(request);
+        const auth = await requireAuthenticated(request);
         if (!auth.ok) return withWebCors(auth.response);
         const key = process.env.LOVABLE_API_KEY;
         if (!key) return withWebCors(new Response("Missing LOVABLE_API_KEY", { status: 500 }));
@@ -15,9 +15,21 @@ export const Route = createFileRoute("/api/web/transcribe")({
         const file = inForm.get("file");
         if (!(file instanceof Blob)) return withWebCors(new Response("file required", { status: 400 }));
 
+        // Guard against silence / near-empty audio → sinon gpt-4o-transcribe
+        // hallucine des phrases ("Merci.", "Sous-titres…", ou reprend le prompt).
+        if (file.size < 6000) {
+          return withWebCors(Response.json({ text: "" }));
+        }
+
         const outForm = new FormData();
         outForm.append("file", file, "audio.webm");
-        outForm.append("model", "openai/gpt-4o-mini-transcribe");
+        outForm.append("model", "openai/gpt-4o-transcribe");
+        // Force French recognition — bare ISO-639-1 code.
+        outForm.append("language", "fr");
+        // Pas de prompt de biais — injecter des prénoms ou du vocabulaire
+        // pousse le modèle à halluciner ces mots quand l'utilisateur ne parle pas.
+        // Température basse pour limiter davantage les hallucinations.
+        outForm.append("temperature", "0");
 
         const res = await fetch("https://ai.gateway.lovable.dev/v1/audio/transcriptions", {
           method: "POST",
@@ -29,7 +41,20 @@ export const Route = createFileRoute("/api/web/transcribe")({
           return withWebCors(new Response(`STT error ${res.status}: ${t.slice(0, 200)}`, { status: res.status }));
         }
         const j = await res.json();
-        return withWebCors(Response.json({ text: j.text ?? "" }));
+        const raw = String(j.text ?? "").trim();
+        // Filtre anti-hallucinations Whisper connues (silence → phrases parasites)
+        const norm = raw.toLowerCase().replace(/[.!?…,'"«»\s]+/g, " ").trim();
+        const HALLUCINATIONS = [
+          "merci", "merci .", "merci d avoir regarde", "merci d avoir regarde cette video",
+          "sous titres realises par la communaute d amara org",
+          "sous titrage st 501", "sous titres", "abonnez vous",
+          "je vous remercie", "a bientot", "au revoir",
+          "bonne journee", "bonne soiree", "…", ".",
+        ];
+        if (!raw || raw.length < 2 || HALLUCINATIONS.includes(norm)) {
+          return withWebCors(Response.json({ text: "" }));
+        }
+        return withWebCors(Response.json({ text: raw }));
       },
     },
   },

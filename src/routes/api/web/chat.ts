@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { requireAlexandra, serviceClient, LYRA_SYSTEM_PROMPT, webCorsPreflight, withWebCors } from "@/lib/web-auth";
+import { requireAuthenticated, serviceClient, buildLyraPrompt, webCorsPreflight, withWebCors } from "@/lib/web-auth";
 
 type Part = { type: "text"; text: string } | { type: "image_url"; image_url: { url: string } };
 
@@ -8,25 +8,33 @@ export const Route = createFileRoute("/api/web/chat")({
     handlers: {
       OPTIONS: async () => webCorsPreflight(),
       POST: async ({ request }) => {
-        const auth = await requireAlexandra(request);
+        const auth = await requireAuthenticated(request);
         if (!auth.ok) return withWebCors(auth.response);
 
         const key = process.env.LOVABLE_API_KEY;
         if (!key) return withWebCors(new Response("Missing LOVABLE_API_KEY", { status: 500 }));
 
-        let body: { text?: string; image?: string | null };
+        let body: { text?: string; image?: string | null; images?: string[] | null };
         try { body = await request.json(); } catch { return withWebCors(new Response("Invalid JSON", { status: 400 })); }
         const text = (body.text || "").trim();
-        const image = body.image || null;
-        if (!text && !image) return withWebCors(new Response("empty", { status: 400 }));
+        const images: string[] = Array.isArray(body.images) && body.images.length
+          ? body.images.filter((x): x is string => typeof x === "string" && x.length > 0)
+          : (body.image ? [body.image] : []);
+        if (!text && images.length === 0) return withWebCors(new Response("empty", { status: 400 }));
 
         const sb = serviceClient();
+        const { data: profile } = await sb
+          .from("user_profiles")
+          .select("display_name, gender, in_transition")
+          .eq("user_id", auth.userId)
+          .maybeSingle();
+        const systemPrompt = buildLyraPrompt(profile ?? null, auth.email);
         // Save user message
         await sb.from("web_messages").insert({
           user_id: auth.userId,
           role: "user",
           content: text,
-          images: image ? [image] : [],
+          images,
         });
 
         // Load recent history for model context (kept short for latency;
@@ -40,7 +48,7 @@ export const Route = createFileRoute("/api/web/chat")({
         const history = (hist ?? []).slice().reverse();
 
         const messages: { role: string; content: string | Part[] }[] = [
-          { role: "system", content: LYRA_SYSTEM_PROMPT },
+          { role: "system", content: systemPrompt },
         ];
         for (let i = 0; i < history.length; i++) {
           const m = history[i];

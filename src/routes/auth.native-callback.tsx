@@ -19,15 +19,23 @@ export const Route = createFileRoute("/auth/native-callback")({
 });
 
 function NativeAuthCallback() {
+  const deepLink = `${NATIVE_AUTH_REDIRECT}${window.location.search}${window.location.hash}`;
+
   useEffect(() => {
-    window.location.replace(`${NATIVE_AUTH_REDIRECT}${window.location.search}${window.location.hash}`);
-  }, []);
+    window.location.replace(deepLink);
+  }, [deepLink]);
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-background px-6 text-center text-foreground">
       <div>
         <h1 className="text-xl font-semibold">Connexion à Lyra…</h1>
         <p className="mt-2 text-sm text-muted-foreground">Tu peux revenir dans l'application.</p>
+        <a
+          className="mt-6 inline-flex items-center justify-center rounded-full bg-primary px-5 py-3 text-sm font-medium text-primary-foreground"
+          href={deepLink}
+        >
+          Ouvrir Lyra
+        </a>
       </div>
     </main>
   );

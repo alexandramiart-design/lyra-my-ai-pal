@@ -1,12 +1,12 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { requireAlexandra, serviceClient, webCorsPreflight, withWebCors } from "@/lib/web-auth";
+import { requireAuthenticated, serviceClient, webCorsPreflight, withWebCors } from "@/lib/web-auth";
 
 export const Route = createFileRoute("/api/web/history")({
   server: {
     handlers: {
       OPTIONS: async () => webCorsPreflight(),
       GET: async ({ request }) => {
-        const auth = await requireAlexandra(request);
+        const auth = await requireAuthenticated(request);
         if (!auth.ok) return withWebCors(auth.response);
         const sb = serviceClient();
         const { data, error } = await sb
@@ -19,7 +19,7 @@ export const Route = createFileRoute("/api/web/history")({
         return withWebCors(Response.json({ messages: data ?? [] }));
       },
       DELETE: async ({ request }) => {
-        const auth = await requireAlexandra(request);
+        const auth = await requireAuthenticated(request);
         if (!auth.ok) return withWebCors(auth.response);
         const sb = serviceClient();
         const { error } = await sb.from("web_messages").delete().eq("user_id", auth.userId);

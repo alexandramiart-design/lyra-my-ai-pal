@@ -59,6 +59,57 @@ export type Database = {
         }
         Relationships: []
       }
+      user_profiles: {
+        Row: {
+          avatar_url: string
+          created_at: string
+          display_name: string
+          gender: string
+          in_transition: boolean
+          onboarded_at: string | null
+          telegram_bot_token: string | null
+          telegram_bot_username: string | null
+          telegram_chat_id: number | null
+          telegram_status: string
+          telegram_webhook_secret: string | null
+          theme: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          avatar_url?: string
+          created_at?: string
+          display_name?: string
+          gender?: string
+          in_transition?: boolean
+          onboarded_at?: string | null
+          telegram_bot_token?: string | null
+          telegram_bot_username?: string | null
+          telegram_chat_id?: number | null
+          telegram_status?: string
+          telegram_webhook_secret?: string | null
+          theme?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          avatar_url?: string
+          created_at?: string
+          display_name?: string
+          gender?: string
+          in_transition?: boolean
+          onboarded_at?: string | null
+          telegram_bot_token?: string | null
+          telegram_bot_username?: string | null
+          telegram_chat_id?: number | null
+          telegram_status?: string
+          telegram_webhook_secret?: string | null
+          theme?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       web_messages: {
         Row: {
           content: string

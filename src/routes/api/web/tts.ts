@@ -1,12 +1,12 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { requireAlexandra, webCorsPreflight, withWebCors } from "@/lib/web-auth";
+import { requireAuthenticated, webCorsPreflight, withWebCors } from "@/lib/web-auth";
 
 export const Route = createFileRoute("/api/web/tts")({
   server: {
     handlers: {
       OPTIONS: async () => webCorsPreflight(),
       POST: async ({ request }) => {
-        const auth = await requireAlexandra(request);
+        const auth = await requireAuthenticated(request);
         if (!auth.ok) return withWebCors(auth.response);
         const key = process.env.LOVABLE_API_KEY;
         if (!key) return withWebCors(new Response("Missing LOVABLE_API_KEY", { status: 500 }));

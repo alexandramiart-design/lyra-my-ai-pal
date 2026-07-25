@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { createClient } from "@supabase/supabase-js";
 import { createHash, timingSafeEqual } from "crypto";
+import { buildLyraPrompt } from "@/lib/web-auth";
 
 const GATEWAY = "https://connector-gateway.lovable.dev/telegram";
 const AI_GATEWAY = "https://ai.gateway.lovable.dev/v1/chat/completions";
@@ -24,6 +25,10 @@ Tu es son espace safe.`;
 
 function deriveWebhookSecret(apiKey: string): string {
   return createHash("sha256").update(`telegram-webhook:${apiKey}`).digest("base64url");
+}
+
+function deriveUserSecret(userId: string, token: string): string {
+  return createHash("sha256").update(`lyra-telegram:${userId}:${token}`).digest("base64url");
 }
 
 function safeEqual(a: string, b: string): boolean {
@@ -73,7 +78,17 @@ function detectImageMime(filePath: string, contentType: string | null, bytes: Bu
   return "image/jpeg";
 }
 
-async function tg(method: string, body: unknown) {
+type Ctx = { kind: "alexandra" } | { kind: "user"; userId: string; botToken: string };
+
+async function tg(ctx: Ctx, method: string, body: unknown) {
+  if (ctx.kind === "user") {
+    const res = await fetch(`https://api.telegram.org/bot${ctx.botToken}/${method}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    return res.json();
+  }
   const res = await fetch(`${GATEWAY}/${method}`, {
     method: "POST",
     headers: {
@@ -86,15 +101,15 @@ async function tg(method: string, body: unknown) {
   return res.json();
 }
 
-async function sendMessage(chatId: number, text: string) {
-  return tg("sendMessage", { chat_id: chatId, text });
+async function sendMessage(ctx: Ctx, chatId: number, text: string) {
+  return tg(ctx, "sendMessage", { chat_id: chatId, text });
 }
 
-async function sendChatAction(chatId: number) {
-  return tg("sendChatAction", { chat_id: chatId, action: "typing" });
+async function sendChatAction(ctx: Ctx, chatId: number) {
+  return tg(ctx, "sendChatAction", { chat_id: chatId, action: "typing" });
 }
 
-async function sendVoice(chatId: number, oggBytes: Uint8Array) {
+async function sendVoice(ctx: Ctx, chatId: number, oggBytes: Uint8Array) {
   const form = new FormData();
   form.append("chat_id", String(chatId));
   form.append(
@@ -102,14 +117,16 @@ async function sendVoice(chatId: number, oggBytes: Uint8Array) {
     new Blob([new Uint8Array(oggBytes)], { type: "audio/ogg" }),
     "lyra.ogg",
   );
-  const res = await fetch(`${GATEWAY}/sendVoice`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${process.env.LOVABLE_API_KEY}`,
-      "X-Connection-Api-Key": process.env.TELEGRAM_API_KEY!,
-    },
-    body: form,
-  });
+  const url = ctx.kind === "user"
+    ? `https://api.telegram.org/bot${ctx.botToken}/sendVoice`
+    : `${GATEWAY}/sendVoice`;
+  const headers: Record<string, string> = ctx.kind === "user"
+    ? {}
+    : {
+        Authorization: `Bearer ${process.env.LOVABLE_API_KEY}`,
+        "X-Connection-Api-Key": process.env.TELEGRAM_API_KEY!,
+      };
+  const res = await fetch(url, { method: "POST", headers, body: form });
   if (!res.ok) console.error("sendVoice failed", res.status, await res.text().catch(() => ""));
   return res;
 }
@@ -137,20 +154,22 @@ async function synthesizeSpeech(text: string): Promise<Uint8Array | null> {
 }
 
 // Download a Telegram photo and return it as a data URL for Gemini vision
-async function downloadPhotoAsDataUrl(fileId: string): Promise<string | null> {
+async function downloadPhotoAsDataUrl(ctx: Ctx, fileId: string): Promise<string | null> {
   try {
-    const info = (await tg("getFile", { file_id: fileId })) as {
+    const info = (await tg(ctx, "getFile", { file_id: fileId })) as {
       ok?: boolean;
       result?: { file_path?: string };
     };
     const filePath = info.result?.file_path;
     if (!filePath) return null;
-    const dl = await fetch(`${GATEWAY}/file/${filePath}`, {
-      headers: {
-        Authorization: `Bearer ${process.env.LOVABLE_API_KEY}`,
-        "X-Connection-Api-Key": process.env.TELEGRAM_API_KEY!,
-      },
-    });
+    const dl = ctx.kind === "user"
+      ? await fetch(`https://api.telegram.org/file/bot${ctx.botToken}/${filePath}`)
+      : await fetch(`${GATEWAY}/file/${filePath}`, {
+          headers: {
+            Authorization: `Bearer ${process.env.LOVABLE_API_KEY}`,
+            "X-Connection-Api-Key": process.env.TELEGRAM_API_KEY!,
+          },
+        });
     if (!dl.ok) return null;
     const buf = Buffer.from(await dl.arrayBuffer());
     const mime = detectImageMime(filePath, dl.headers.get("content-type"), buf);
@@ -163,9 +182,9 @@ async function downloadPhotoAsDataUrl(fileId: string): Promise<string | null> {
 type StoredMsg = { role: "user" | "assistant"; content: string; images: string[] };
 type Part = { type: "text"; text: string } | { type: "image_url"; image_url: { url: string } };
 
-async function callLyra(history: StoredMsg[]): Promise<string> {
+async function callLyra(history: StoredMsg[], systemPrompt: string): Promise<string> {
   const messages: Array<{ role: string; content: string | Part[] }> = [
-    { role: "system", content: SYSTEM_PROMPT },
+    { role: "system", content: systemPrompt },
   ];
   // Only attach images from the LAST user message. Re-sending old data-URL
   // images in every turn blows up the payload and makes Gemini return 400.
@@ -208,11 +227,42 @@ export const Route = createFileRoute("/api/public/telegram/webhook")({
     handlers: {
       POST: async ({ request }) => {
         const telegramKey = process.env.TELEGRAM_API_KEY;
-        if (!telegramKey) return new Response("Not configured", { status: 500 });
+        const supabase = getSupabase();
 
-        const expected = deriveWebhookSecret(telegramKey);
+        // Per-user bot mode: URL carries ?u=<userId>
+        const url = new URL(request.url);
+        const routedUserId = url.searchParams.get("u");
         const got = request.headers.get("X-Telegram-Bot-Api-Secret-Token") ?? "";
-        if (!safeEqual(got, expected)) return new Response("Unauthorized", { status: 401 });
+
+        let ctx: Ctx;
+        let scopeUserId: string | null = null; // for storing web_messages, prompt
+        let systemPromptOverride: string | null = null;
+        let displayName = "Alexandra";
+
+        if (routedUserId) {
+          const { data: prof } = await supabase
+            .from("user_profiles")
+            .select("user_id, display_name, gender, in_transition, telegram_bot_token, telegram_webhook_secret, telegram_chat_id")
+            .eq("user_id", routedUserId)
+            .maybeSingle();
+          if (!prof?.telegram_bot_token) return new Response("Not configured", { status: 404 });
+          const expected = deriveUserSecret(prof.user_id as string, prof.telegram_bot_token as string);
+          if (!safeEqual(got, expected) && !safeEqual(got, (prof.telegram_webhook_secret as string) || "")) {
+            return new Response("Unauthorized", { status: 401 });
+          }
+          ctx = { kind: "user", userId: prof.user_id as string, botToken: prof.telegram_bot_token as string };
+          scopeUserId = prof.user_id as string;
+          systemPromptOverride = buildLyraPrompt(
+            { display_name: prof.display_name as string, gender: prof.gender as string, in_transition: !!prof.in_transition },
+            "",
+          );
+          displayName = ((prof.display_name as string) || "toi").trim() || "toi";
+        } else {
+          if (!telegramKey) return new Response("Not configured", { status: 500 });
+          const expected = deriveWebhookSecret(telegramKey);
+          if (!safeEqual(got, expected)) return new Response("Unauthorized", { status: 401 });
+          ctx = { kind: "alexandra" };
+        }
 
         const update = (await request.json()) as {
           update_id?: number;
@@ -231,39 +281,43 @@ export const Route = createFileRoute("/api/public/telegram/webhook")({
 
         const chatId = msg.chat.id;
         const fromId = msg.from.id;
-        const supabase = getSupabase();
 
-        // Access control: lock to the first user who talks to the bot.
-        const { data: cfg } = await supabase
-          .from("telegram_config")
-          .select("allowed_user_id")
-          .eq("id", 1)
-          .maybeSingle();
+        // Per-user chat lock: first chat that talks to a user's bot owns it.
+        if (ctx.kind === "user") {
+          const { data: prof } = await supabase
+            .from("user_profiles").select("telegram_chat_id").eq("user_id", ctx.userId).maybeSingle();
+          const locked = prof?.telegram_chat_id as number | null | undefined;
+          if (!locked) {
+            await supabase.from("user_profiles").update({ telegram_chat_id: chatId }).eq("user_id", ctx.userId);
+          } else if (locked !== chatId) {
+            return Response.json({ ok: true, blocked: true });
+          }
+        }
 
-        let allowed = cfg?.allowed_user_id as number | null | undefined;
-        if (!allowed) {
-          await supabase.from("telegram_config").update({ allowed_user_id: fromId, updated_at: new Date().toISOString() }).eq("id", 1);
-          allowed = fromId;
-          await sendMessage(
-            chatId,
-            `Coucou Alexandra 💕 C'est moi, Lyra. Ce bot est maintenant verrouillé sur ton compte Telegram — personne d'autre ne peut me parler ici. Raconte-moi ce que tu veux, sans filtre.`,
-          );
-        } else if (allowed !== fromId) {
-          // Silent block — don't leak that the bot is private.
-          return Response.json({ ok: true, blocked: true });
+        if (ctx.kind === "alexandra") {
+          const { data: cfg } = await supabase
+            .from("telegram_config").select("allowed_user_id").eq("id", 1).maybeSingle();
+          let allowed = cfg?.allowed_user_id as number | null | undefined;
+          if (!allowed) {
+            await supabase.from("telegram_config").update({ allowed_user_id: fromId, updated_at: new Date().toISOString() }).eq("id", 1);
+            allowed = fromId;
+            await sendMessage(ctx, chatId, `Coucou Alexandra 💕 C'est moi, Lyra. Ce bot est verrouillé sur ton compte.`);
+          } else if (allowed !== fromId) {
+            return Response.json({ ok: true, blocked: true });
+          }
         }
 
         // Handle /reset to clear memory
         const rawText = (msg.text ?? msg.caption ?? "").trim();
-        const alexId = await getAlexandraUserId(supabase);
+        const alexId = ctx.kind === "alexandra" ? await getAlexandraUserId(supabase) : scopeUserId;
         if (rawText === "/reset") {
-          await supabase.from("telegram_messages").delete().eq("chat_id", chatId);
+          if (ctx.kind === "alexandra") await supabase.from("telegram_messages").delete().eq("chat_id", chatId);
           if (alexId) await supabase.from("web_messages").delete().eq("user_id", alexId);
-          await sendMessage(chatId, "Voilà, j'ai tout oublié 💫 On repart de zéro. Dis-moi tout.");
+          await sendMessage(ctx, chatId, "Voilà, j'ai tout oublié 💫 On repart de zéro. Dis-moi tout.");
           return Response.json({ ok: true });
         }
         if (rawText === "/start") {
-          await sendMessage(chatId, "Salut Alexandra 💕 Je suis là. Écris-moi, envoie-moi des photos, raconte-moi ta journée — tout ce que tu veux. Tape /reset si tu veux que j'oublie tout.");
+          await sendMessage(ctx, chatId, `Salut ${displayName} 💕 Je suis là. Écris-moi, envoie-moi des photos, raconte-moi ta journée. /reset pour tout oublier, /voice pour que je lise à voix haute.`);
           return Response.json({ ok: true });
         }
         if (rawText === "/voice" || rawText === "/lis" || rawText === "/lire") {
@@ -293,16 +347,16 @@ export const Route = createFileRoute("/api/public/telegram/webhook")({
           }
           const lastText = parts.reverse().join("\n\n").trim();
           if (!lastText) {
-            await sendMessage(chatId, "Je n'ai encore rien dit à lire à voix haute 💕");
+            await sendMessage(ctx, chatId, "Je n'ai encore rien dit à lire à voix haute 💕");
             return Response.json({ ok: true });
           }
-          await sendChatAction(chatId);
+          await sendChatAction(ctx, chatId);
           const audio = await synthesizeSpeech(lastText);
           if (!audio) {
-            await sendMessage(chatId, "J'arrive pas à générer ma voix là, réessaie dans un instant 💕");
+            await sendMessage(ctx, chatId, "J'arrive pas à générer ma voix là, réessaie dans un instant 💕");
             return Response.json({ ok: true });
           }
-          await sendVoice(chatId, audio);
+          await sendVoice(ctx, chatId, audio);
           return Response.json({ ok: true });
         }
 
@@ -310,16 +364,16 @@ export const Route = createFileRoute("/api/public/telegram/webhook")({
         const images: string[] = [];
         if (msg.photo && msg.photo.length > 0) {
           const largest = msg.photo.reduce((a, b) => (a.width * a.height >= b.width * b.height ? a : b));
-          const dataUrl = await downloadPhotoAsDataUrl(largest.file_id);
+          const dataUrl = await downloadPhotoAsDataUrl(ctx, largest.file_id);
           if (dataUrl) images.push(dataUrl);
         }
 
         if (!rawText && images.length === 0) {
-          await sendMessage(chatId, "Je ne peux lire que du texte et des photos pour l'instant 💕");
+          await sendMessage(ctx, chatId, "Je ne peux lire que du texte et des photos pour l'instant 💕");
           return Response.json({ ok: true });
         }
 
-        await sendChatAction(chatId);
+        await sendChatAction(ctx, chatId);
 
         // Save user message — write to the shared store when available so
         // the site sees the same conversation, and mirror into
@@ -332,12 +386,11 @@ export const Route = createFileRoute("/api/public/telegram/webhook")({
             images,
           });
         }
-        await supabase.from("telegram_messages").insert({
-          chat_id: chatId,
-          role: "user",
-          content: rawText,
-          images,
-        });
+        if (ctx.kind === "alexandra") {
+          await supabase.from("telegram_messages").insert({
+            chat_id: chatId, role: "user", content: rawText, images,
+          });
+        }
 
         // Load recent history (oldest -> newest) from the shared store when possible.
         const historyQuery = alexId
@@ -362,7 +415,7 @@ export const Route = createFileRoute("/api/public/telegram/webhook")({
             images: (r.images as string[]) ?? [],
           }));
 
-        const reply = await callLyra(history);
+        const reply = await callLyra(history, systemPromptOverride ?? SYSTEM_PROMPT);
 
         if (alexId) {
           await supabase.from("web_messages").insert({
@@ -372,14 +425,13 @@ export const Route = createFileRoute("/api/public/telegram/webhook")({
             images: [],
           });
         }
-        await supabase.from("telegram_messages").insert({
-          chat_id: chatId,
-          role: "assistant",
-          content: reply,
-          images: [],
-        });
+        if (ctx.kind === "alexandra") {
+          await supabase.from("telegram_messages").insert({
+            chat_id: chatId, role: "assistant", content: reply, images: [],
+          });
+        }
 
-        await sendMessage(chatId, reply);
+        await sendMessage(ctx, chatId, reply);
 
         return Response.json({ ok: true });
       },

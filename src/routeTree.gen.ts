@@ -13,6 +13,8 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as AuthNativeCallbackRouteImport } from './routes/auth.native-callback'
 import { Route as ApiWebTtsRouteImport } from './routes/api/web/tts'
 import { Route as ApiWebTranscribeRouteImport } from './routes/api/web/transcribe'
+import { Route as ApiWebTelegramSetupRouteImport } from './routes/api/web/telegram-setup'
+import { Route as ApiWebProfileRouteImport } from './routes/api/web/profile'
 import { Route as ApiWebHistoryRouteImport } from './routes/api/web/history'
 import { Route as ApiWebChatRouteImport } from './routes/api/web/chat'
 import { Route as ApiPublicTelegramWebhookRouteImport } from './routes/api/public/telegram/webhook'
@@ -37,6 +39,16 @@ const ApiWebTranscribeRoute = ApiWebTranscribeRouteImport.update({
   path: '/api/web/transcribe',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiWebTelegramSetupRoute = ApiWebTelegramSetupRouteImport.update({
+  id: '/api/web/telegram-setup',
+  path: '/api/web/telegram-setup',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiWebProfileRoute = ApiWebProfileRouteImport.update({
+  id: '/api/web/profile',
+  path: '/api/web/profile',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiWebHistoryRoute = ApiWebHistoryRouteImport.update({
   id: '/api/web/history',
   path: '/api/web/history',
@@ -59,6 +71,8 @@ export interface FileRoutesByFullPath {
   '/auth/native-callback': typeof AuthNativeCallbackRoute
   '/api/web/chat': typeof ApiWebChatRoute
   '/api/web/history': typeof ApiWebHistoryRoute
+  '/api/web/profile': typeof ApiWebProfileRoute
+  '/api/web/telegram-setup': typeof ApiWebTelegramSetupRoute
   '/api/web/transcribe': typeof ApiWebTranscribeRoute
   '/api/web/tts': typeof ApiWebTtsRoute
   '/api/public/telegram/webhook': typeof ApiPublicTelegramWebhookRoute
@@ -68,6 +82,8 @@ export interface FileRoutesByTo {
   '/auth/native-callback': typeof AuthNativeCallbackRoute
   '/api/web/chat': typeof ApiWebChatRoute
   '/api/web/history': typeof ApiWebHistoryRoute
+  '/api/web/profile': typeof ApiWebProfileRoute
+  '/api/web/telegram-setup': typeof ApiWebTelegramSetupRoute
   '/api/web/transcribe': typeof ApiWebTranscribeRoute
   '/api/web/tts': typeof ApiWebTtsRoute
   '/api/public/telegram/webhook': typeof ApiPublicTelegramWebhookRoute
@@ -78,6 +94,8 @@ export interface FileRoutesById {
   '/auth/native-callback': typeof AuthNativeCallbackRoute
   '/api/web/chat': typeof ApiWebChatRoute
   '/api/web/history': typeof ApiWebHistoryRoute
+  '/api/web/profile': typeof ApiWebProfileRoute
+  '/api/web/telegram-setup': typeof ApiWebTelegramSetupRoute
   '/api/web/transcribe': typeof ApiWebTranscribeRoute
   '/api/web/tts': typeof ApiWebTtsRoute
   '/api/public/telegram/webhook': typeof ApiPublicTelegramWebhookRoute
@@ -89,6 +107,8 @@ export interface FileRouteTypes {
     | '/auth/native-callback'
     | '/api/web/chat'
     | '/api/web/history'
+    | '/api/web/profile'
+    | '/api/web/telegram-setup'
     | '/api/web/transcribe'
     | '/api/web/tts'
     | '/api/public/telegram/webhook'
@@ -98,6 +118,8 @@ export interface FileRouteTypes {
     | '/auth/native-callback'
     | '/api/web/chat'
     | '/api/web/history'
+    | '/api/web/profile'
+    | '/api/web/telegram-setup'
     | '/api/web/transcribe'
     | '/api/web/tts'
     | '/api/public/telegram/webhook'
@@ -107,6 +129,8 @@ export interface FileRouteTypes {
     | '/auth/native-callback'
     | '/api/web/chat'
     | '/api/web/history'
+    | '/api/web/profile'
+    | '/api/web/telegram-setup'
     | '/api/web/transcribe'
     | '/api/web/tts'
     | '/api/public/telegram/webhook'
@@ -117,6 +141,8 @@ export interface RootRouteChildren {
   AuthNativeCallbackRoute: typeof AuthNativeCallbackRoute
   ApiWebChatRoute: typeof ApiWebChatRoute
   ApiWebHistoryRoute: typeof ApiWebHistoryRoute
+  ApiWebProfileRoute: typeof ApiWebProfileRoute
+  ApiWebTelegramSetupRoute: typeof ApiWebTelegramSetupRoute
   ApiWebTranscribeRoute: typeof ApiWebTranscribeRoute
   ApiWebTtsRoute: typeof ApiWebTtsRoute
   ApiPublicTelegramWebhookRoute: typeof ApiPublicTelegramWebhookRoute
@@ -152,6 +178,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiWebTranscribeRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/web/telegram-setup': {
+      id: '/api/web/telegram-setup'
+      path: '/api/web/telegram-setup'
+      fullPath: '/api/web/telegram-setup'
+      preLoaderRoute: typeof ApiWebTelegramSetupRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/web/profile': {
+      id: '/api/web/profile'
+      path: '/api/web/profile'
+      fullPath: '/api/web/profile'
+      preLoaderRoute: typeof ApiWebProfileRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/web/history': {
       id: '/api/web/history'
       path: '/api/web/history'
@@ -181,6 +221,8 @@ const rootRouteChildren: RootRouteChildren = {
   AuthNativeCallbackRoute: AuthNativeCallbackRoute,
   ApiWebChatRoute: ApiWebChatRoute,
   ApiWebHistoryRoute: ApiWebHistoryRoute,
+  ApiWebProfileRoute: ApiWebProfileRoute,
+  ApiWebTelegramSetupRoute: ApiWebTelegramSetupRoute,
   ApiWebTranscribeRoute: ApiWebTranscribeRoute,
   ApiWebTtsRoute: ApiWebTtsRoute,
   ApiPublicTelegramWebhookRoute: ApiPublicTelegramWebhookRoute,

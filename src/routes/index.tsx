@@ -1,10 +1,13 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
-import { Phone, PhoneOff, Mic, Send, Volume2, Trash2, LogOut, Sparkles, ImagePlus, X } from "lucide-react";
+import { Phone, PhoneOff, Mic, Send, Volume2, Trash2, Sparkles, ImagePlus, X, Speaker, Bluetooth, Check } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { lovable } from "@/integrations/lovable";
 import type { Session } from "@supabase/supabase-js";
 import { SideNotch } from "@/components/side-notch";
+import { Onboarding } from "@/components/onboarding";
+import { SettingsPanel } from "@/components/settings-panel";
+import { THEMES, type ThemeId } from "@/lib/themes";
 import lyraAvatarAsset from "@/assets/lyra-avatar.png.asset.json";
 import userAvatarAsset from "@/assets/user-avatar.png.asset.json";
 const lyraAvatar = lyraAvatarAsset.url;
@@ -23,6 +26,43 @@ declare global {
 
 function isNativeApp() {
   return typeof window !== "undefined" && window.Capacitor?.isNativePlatform?.() === true;
+}
+
+type AudioOutput = { deviceId: string; label: string; kind: "earpiece" | "speakerphone" | "bluetooth" | "other" };
+
+function classifyAudioOutput(label: string): AudioOutput["kind"] {
+  const raw = label.toLowerCase();
+  if (/bluetooth|bt|airpods|buds|beats|jbl|sony|bose|casque|headset|headphone/i.test(raw)) return "bluetooth";
+  if (/earpiece|receiver|oreille|écouteur interne|ear speaker/i.test(raw)) return "earpiece";
+  if (/speakerphone|loudspeaker|haut-parleur|speaker/i.test(raw)) return "speakerphone";
+  return "other";
+}
+
+function normalizeAudioOutputs(devices: MediaDeviceInfo[]): AudioOutput[] {
+  const raw = devices.filter((d) => d.kind === "audiooutput");
+  const bluetooth = raw
+    .filter((d) => classifyAudioOutput(d.label || "") === "bluetooth")
+    .map((d) => ({
+      deviceId: d.deviceId,
+      label: d.label?.trim() || "Casque Bluetooth",
+      kind: "bluetooth" as const,
+    }));
+
+  // On veut toujours exposer exactement deux sorties intégrées :
+  // l'écouteur d'oreille et le haut-parleur principal.
+  const builtIn = raw.find((d) => d.deviceId === "default") || raw.find((d) => classifyAudioOutput(d.label || "") !== "bluetooth");
+  const baseId = builtIn?.deviceId ?? "default";
+  const outs: AudioOutput[] = [
+    { deviceId: baseId + "#earpiece", label: "Téléphone", kind: "earpiece" },
+    { deviceId: baseId + "#speakerphone", label: "Haut-parleur", kind: "speakerphone" },
+    ...bluetooth,
+  ];
+  return outs;
+}
+
+function resolveSinkId(deviceId: string): string {
+  // Virtual entries map to the real default/built-in sink.
+  return deviceId.replace(/#(earpiece|speakerphone)$/, "");
 }
 
 function apiUrl(path: string) {
@@ -63,20 +103,10 @@ async function handleNativeOAuthCallback(url: string) {
 }
 
 async function signInNativeGoogle() {
-  // Demande directement l'URL OAuth à Supabase puis ouvre le navigateur natif.
-  // Après consentement, Supabase redirige vers NATIVE_AUTH_WEB_CALLBACK
-  // qui renvoie le deep link `app.lovable.lyra://auth-callback?code=...` dans l'app.
-  const { data, error } = await supabase.auth.signInWithOAuth({
-    provider: "google",
-    options: {
-      redirectTo: NATIVE_AUTH_WEB_CALLBACK,
-      skipBrowserRedirect: true,
-    },
-  });
-  if (error) throw error;
-  if (!data?.url) throw new Error("URL OAuth introuvable");
-  const { Browser } = await import("@capacitor/browser");
-  await Browser.open({ url: data.url, presentationStyle: "popover" });
+  // Utilise le broker Lovable managé, puis repasse par une page publique qui
+  // ouvre immédiatement le deep link Android pour revenir dans l'APK.
+  const r = await lovable.auth.signInWithOAuth("google", { redirect_uri: NATIVE_AUTH_WEB_CALLBACK });
+  if (r.error) throw r.error instanceof Error ? r.error : new Error(String(r.error));
 }
 
 export const Route = createFileRoute("/")({
@@ -84,6 +114,10 @@ export const Route = createFileRoute("/")({
     meta: [
       { title: "Lyra — ton espace safe" },
       { name: "description", content: "Lyra, amie IA safe pour Alexandra." },
+      { property: "og:title", content: "Lyra — ton espace safe" },
+      { property: "og:description", content: "Lyra, amie IA safe pour Alexandra." },
+      { property: "og:type", content: "website" },
+      { name: "twitter:card", content: "summary" },
     ],
   }),
   component: Page,
@@ -92,15 +126,42 @@ export const Route = createFileRoute("/")({
 
 type Msg = { id: string; role: "user" | "assistant"; content: string; images?: string[] };
 
+type ServerProfile = {
+  display_name: string;
+  gender: "male" | "female";
+  in_transition: boolean;
+  avatar_url: string;
+  theme: ThemeId;
+  telegram_bot_username?: string | null;
+  telegram_status?: string | null;
+  onboarded_at?: string | null;
+};
+
 export function Page() {
   const [session, setSession] = useState<Session | null>(null);
   const [ready, setReady] = useState(false);
+  const [profile, setProfile] = useState<ServerProfile | null>(null);
+  const [profileLoaded, setProfileLoaded] = useState(false);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => { setSession(data.session); setReady(true); });
     const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => setSession(s));
     return () => sub.subscription.unsubscribe();
   }, []);
+
+  useEffect(() => {
+    if (!session) { setProfile(null); setProfileLoaded(false); return; }
+    (async () => {
+      const r = await fetch(apiUrl("/api/web/profile"), {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+      if (r.ok) {
+        const j = (await r.json()) as { profile: ServerProfile | null };
+        setProfile(j.profile);
+      }
+      setProfileLoaded(true);
+    })();
+  }, [session]);
 
   useEffect(() => {
     if (!isNativeApp()) return;
@@ -124,20 +185,55 @@ export function Page() {
   if (!ready) return <Shell><div className="text-white/70">…</div></Shell>;
   if (!session) return <SignIn />;
   const email = (session.user.email || "").toLowerCase();
-  if (email !== ALLOWED_EMAIL) return <Forbidden email={email} />;
-  return <Chat token={session.access_token} userAvatar={alexandraAvatar} />;
+  const isOwner = email === ALLOWED_EMAIL;
+
+  if (!profileLoaded) return <Shell><div className="text-white/70">…</div></Shell>;
+
+  if (!isOwner && (!profile || !profile.onboarded_at)) {
+    return (
+      <Onboarding
+        token={session.access_token}
+        apiUrl={apiUrl}
+        onDone={async () => {
+          const r = await fetch(apiUrl("/api/web/profile"), {
+            headers: { Authorization: `Bearer ${session.access_token}` },
+          });
+          if (r.ok) {
+            const j = (await r.json()) as { profile: ServerProfile | null };
+            setProfile(j.profile);
+          }
+        }}
+      />
+    );
+  }
+
+  const effectiveProfile: ServerProfile = isOwner
+    ? {
+        display_name: "Alexandra",
+        gender: "female",
+        in_transition: false,
+        avatar_url: alexandraAvatar,
+        theme: "pink",
+        telegram_bot_username: profile?.telegram_bot_username ?? null,
+        telegram_status: profile?.telegram_status ?? "idle",
+      }
+    : (profile as ServerProfile);
+
+  return (
+    <Chat
+      token={session.access_token}
+      profile={effectiveProfile}
+      isOwner={isOwner}
+      onProfileUpdated={setProfile}
+    />
+  );
 }
 
-function Shell({ children }: { children: React.ReactNode }) {
+function Shell({ children, theme = "pink" }: { children: React.ReactNode; theme?: ThemeId }) {
+  const t = THEMES[theme] ?? THEMES.pink;
   return (
     <div className="h-[100dvh] w-full text-white relative overflow-hidden"
-         style={{
-           background:
-             "radial-gradient(1200px 800px at 10% 0%, #ffb3d1 0%, transparent 55%)," +
-             "radial-gradient(1000px 700px at 90% 20%, #ff7ab8 0%, transparent 55%)," +
-             "radial-gradient(900px 800px at 50% 100%, #b06cf5 0%, transparent 60%)," +
-             "linear-gradient(160deg, #ff4fa3 0%, #ff69b4 35%, #d259e6 70%, #7b3fe4 100%)",
-         }}>
+         style={{ background: t.background }}>
       <div className="pointer-events-none absolute inset-0"
            style={{ background: "radial-gradient(1200px 400px at 50% -10%, rgba(255,255,255,0.35), transparent 60%)" }} />
       <div className="relative z-10 mx-auto flex h-full max-w-md flex-col">
@@ -176,23 +272,7 @@ function SignIn() {
           {loading ? "…" : "Se connecter avec Google"}
         </button>
         {err && <p className="mt-4 text-xs text-white/90">{err}</p>}
-        <p className="mt-6 text-[11px] text-white/70">Seul le compte {ALLOWED_EMAIL} est autorisé.</p>
-      </div>
-    </Shell>
-  );
-}
-
-function Forbidden({ email }: { email: string }) {
-  return (
-    <Shell>
-      <div className="flex flex-1 flex-col items-center justify-center px-8 text-center">
-        <div className="mb-6 text-6xl">🚫</div>
-        <h1 className="text-2xl font-semibold">Accès réservé</h1>
-        <p className="mt-2 text-white/90 text-sm">Ce compte ({email}) n'est pas autorisé.<br/>Connecte-toi avec {ALLOWED_EMAIL}.</p>
-        <button onClick={() => supabase.auth.signOut()}
-          className="mt-8 inline-flex items-center gap-2 rounded-full bg-white/20 px-5 py-2 text-sm font-medium backdrop-blur ring-1 ring-white/30 hover:bg-white/30">
-          <LogOut className="h-4 w-4" /> Se déconnecter
-        </button>
+        <p className="mt-6 text-[11px] text-white/70">Ton espace safe, personnel et privé.</p>
       </div>
     </Shell>
   );
@@ -204,10 +284,21 @@ function GoogleIcon() {
   );
 }
 
-function Chat({ token, userAvatar }: { token: string; userAvatar: string | null }) {
+function Chat({
+  token, profile, isOwner, onProfileUpdated,
+}: {
+  token: string;
+  profile: ServerProfile;
+  isOwner: boolean;
+  onProfileUpdated: (p: ServerProfile) => void;
+}) {
+  const userAvatar = profile.avatar_url || null;
+  const displayName = profile.display_name || "Toi";
+  const theme = profile.theme;
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
-  const [pendingImg, setPendingImg] = useState<string | null>(null);
+  const [pendingImgs, setPendingImgs] = useState<string[]>([]);
   const [sending, setSending] = useState(false);
   const [recording, setRecording] = useState(false);
   const [inCall, setInCall] = useState(false);
@@ -215,6 +306,8 @@ function Chat({ token, userAvatar }: { token: string; userAvatar: string | null 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const speakQueueRef = useRef<Promise<void>>(Promise.resolve());
   const speakCancelRef = useRef(false);
+  const [audioOutputs, setAudioOutputs] = useState<AudioOutput[]>([]);
+  const [audioOutputId, setAudioOutputId] = useState<string>("default");
 
   const authH = { Authorization: `Bearer ${token}` };
 
@@ -232,17 +325,18 @@ function Chat({ token, userAvatar }: { token: string; userAvatar: string | null 
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [msgs, sending]);
 
-  async function sendText(text: string, image?: string | null, onSentence?: (s: string) => void) {
-    if (!text.trim() && !image) return;
+  async function sendText(text: string, images?: string[] | null, onSentence?: (s: string) => void) {
+    const imgs = images && images.length ? images : [];
+    if (!text.trim() && imgs.length === 0) return;
     setSending(true);
-    const localUser: Msg = { id: crypto.randomUUID(), role: "user", content: text, images: image ? [image] : [] };
+    const localUser: Msg = { id: crypto.randomUUID(), role: "user", content: text, images: imgs };
     setMsgs((m) => [...m, localUser]);
-    setInput(""); setPendingImg(null);
+    setInput(""); setPendingImgs([]);
 
     const res = await fetch(apiUrl("/api/web/chat"), {
       method: "POST",
       headers: { "Content-Type": "application/json", ...authH },
-      body: JSON.stringify({ text, image }),
+      body: JSON.stringify({ text, images: imgs }),
     });
     if (!res.ok || !res.body) {
       const err = await res.text().catch(() => "erreur");
@@ -288,16 +382,32 @@ function Chat({ token, userAvatar }: { token: string; userAvatar: string | null 
 
   async function handleFile(f: File) {
     const reader = new FileReader();
-    reader.onload = () => setPendingImg(reader.result as string);
+    reader.onload = () => setPendingImgs((prev) => [...prev, reader.result as string]);
     reader.readAsDataURL(f);
+  }
+  async function handleFiles(files: FileList) {
+    for (const f of Array.from(files)) await handleFile(f);
   }
 
   // Recording (voice message)
   const mediaRecRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   async function startRecording(onStop?: (blob: Blob) => void) {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    const mr = new MediaRecorder(stream, { mimeType: MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" : "" });
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+        channelCount: 1,
+        sampleRate: 48000,
+      } as MediaTrackConstraints,
+    });
+    const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+      ? "audio/webm;codecs=opus"
+      : MediaRecorder.isTypeSupported("audio/webm")
+        ? "audio/webm"
+        : "";
+    const mr = new MediaRecorder(stream, { mimeType, audioBitsPerSecond: 128000 });
     chunksRef.current = [];
     mr.ondataavailable = (e) => { if (e.data.size) chunksRef.current.push(e.data); };
     mr.onstop = () => {
@@ -337,6 +447,10 @@ function Chat({ token, userAvatar }: { token: string; userAvatar: string | null 
     const url = URL.createObjectURL(blob);
     const a = new Audio(url);
     audioRef.current = a;
+    try {
+      const anyA = a as unknown as { setSinkId?: (id: string) => Promise<void> };
+      if (audioOutputId && anyA.setSinkId) await anyA.setSinkId(resolveSinkId(audioOutputId));
+    } catch {}
     await a.play().catch(() => {});
     return new Promise<void>((res) => {
       a.onended = () => { URL.revokeObjectURL(url); res(); };
@@ -432,6 +546,14 @@ function Chat({ token, userAvatar }: { token: string; userAvatar: string | null 
     try {
       callStreamRef.current = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
       callAcRef.current = new AudioContext();
+      try {
+        const devs = await navigator.mediaDevices.enumerateDevices();
+        const outs = normalizeAudioOutputs(devs);
+        setAudioOutputs(outs);
+        const bt = outs.find((o) => o.kind === "bluetooth");
+        const ear = outs.find((o) => o.kind === "earpiece");
+        setAudioOutputId((prev) => (prev && prev !== "default" ? prev : (bt?.deviceId || ear?.deviceId || "default")));
+      } catch {}
     } catch {
       endCall();
       document.removeEventListener("visibilitychange", visHandler);
@@ -441,9 +563,10 @@ function Chat({ token, userAvatar }: { token: string; userAvatar: string | null 
     while (callActiveRef.current) {
       const blob = await recordUntilSilence();
       if (!callActiveRef.current) break;
-      if (!blob || blob.size < 1200) continue;
+      // Seuil plus strict — sous ~6 Ko c'est du silence, on n'envoie pas.
+      if (!blob || blob.size < 6000) continue;
       const text = await transcribe(blob);
-      if (!text) continue;
+      if (!text || text.trim().length < 2) continue;
       await sendText(text, null, (s) => { if (callActiveRef.current) enqueueSpeak(s); });
       await speakQueueRef.current;
     }
@@ -463,13 +586,13 @@ function Chat({ token, userAvatar }: { token: string; userAvatar: string | null 
   }
 
   return (
-    <Shell>
+    <Shell theme={theme}>
       <header className="shrink-0 flex items-center justify-between px-4 pt-4 pb-2">
         <div className="flex items-center gap-2">
           <img src={lyraAvatar} alt="Lyra" className="h-10 w-10 rounded-full object-cover ring-2 ring-white/60 shadow-md" />
           <div>
             <p className="text-sm font-semibold leading-none">Lyra</p>
-            <p className="text-[11px] text-white/80">En ligne pour toi</p>
+            <p className="text-[11px] text-white/80">En ligne pour {displayName}</p>
           </div>
         </div>
         <div className="flex items-center gap-1">
@@ -481,9 +604,6 @@ function Chat({ token, userAvatar }: { token: string; userAvatar: string | null 
           <button onClick={clearAll} className="flex h-9 w-9 items-center justify-center rounded-full bg-white/15 hover:bg-white/25" title="Effacer la mémoire">
             <Trash2 className="h-4 w-4" />
           </button>
-          <button onClick={() => supabase.auth.signOut()} className="flex h-9 w-9 items-center justify-center rounded-full bg-white/15 hover:bg-white/25" title="Déconnexion">
-            <LogOut className="h-4 w-4" />
-          </button>
         </div>
       </header>
 
@@ -491,7 +611,7 @@ function Chat({ token, userAvatar }: { token: string; userAvatar: string | null 
         {msgs.length === 0 && (
           <div className="mt-10 flex flex-col items-center text-center opacity-90">
             <Sparkles className="h-8 w-8" />
-            <p className="mt-3 text-sm">Dis-moi tout, Alexandra 💕</p>
+            <p className="mt-3 text-sm">Dis-moi tout, {displayName} 💕</p>
           </div>
         )}
         {msgs.map((m) => (
@@ -505,28 +625,40 @@ function Chat({ token, userAvatar }: { token: string; userAvatar: string | null 
         )}
       </div>
 
-      {pendingImg && (
-        <div className="mx-4 mb-2 flex items-center gap-2 rounded-2xl bg-white/15 p-2 backdrop-blur">
-          <img src={pendingImg} className="h-14 w-14 rounded-lg object-cover" alt="" />
-          <span className="text-xs">Photo prête à envoyer</span>
-          <button onClick={() => setPendingImg(null)} className="ml-auto rounded-full bg-white/20 p-1"><X className="h-3 w-3" /></button>
+      {pendingImgs.length > 0 && (
+        <div className="mx-4 mb-2 flex flex-wrap items-center gap-2 rounded-2xl bg-white/15 p-2 backdrop-blur">
+          {pendingImgs.map((src, i) => (
+            <div key={i} className="relative">
+              <img src={src} className="h-14 w-14 rounded-lg object-cover" alt="" />
+              <button
+                onClick={() => setPendingImgs((prev) => prev.filter((_, j) => j !== i))}
+                className="absolute -top-1 -right-1 rounded-full bg-black/60 p-0.5"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </div>
+          ))}
+          <span className="ml-1 text-xs">
+            {pendingImgs.length} photo{pendingImgs.length > 1 ? "s" : ""} prête{pendingImgs.length > 1 ? "s" : ""}
+          </span>
+          <button onClick={() => setPendingImgs([])} className="ml-auto rounded-full bg-white/20 px-2 py-1 text-[11px]">Tout retirer</button>
         </div>
       )}
 
       <div className="shrink-0 flex items-end gap-2 bg-gradient-to-t from-black/20 to-transparent px-3 pb-4 pt-2 backdrop-blur-sm">
         <label className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-white/20 ring-1 ring-white/30 backdrop-blur cursor-pointer">
           <ImagePlus className="h-5 w-5" />
-          <input type="file" accept="image/*" className="hidden"
-            onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); e.currentTarget.value = ""; }} />
+          <input type="file" accept="image/*" multiple className="hidden"
+            onChange={(e) => { if (e.target.files) handleFiles(e.target.files); e.currentTarget.value = ""; }} />
         </label>
         <textarea
           value={input} onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendText(input, pendingImg); } }}
+          onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendText(input, pendingImgs); } }}
           rows={1} placeholder="Écris à Lyra…"
           className="min-h-11 max-h-32 flex-1 resize-none rounded-3xl bg-white/95 px-4 py-3 text-sm text-gray-900 placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-white/70"
         />
-        {input.trim() || pendingImg ? (
-          <button onClick={() => sendText(input, pendingImg)} disabled={sending}
+        {input.trim() || pendingImgs.length > 0 ? (
+          <button onClick={() => sendText(input, pendingImgs)} disabled={sending}
             className="flex h-11 w-11 items-center justify-center rounded-full bg-white text-pink-600 shadow-lg active:scale-95">
             <Send className="h-5 w-5" />
           </button>
@@ -539,8 +671,40 @@ function Chat({ token, userAvatar }: { token: string; userAvatar: string | null 
         )}
       </div>
 
-      {inCall && <CallOverlay onEnd={endCall} />}
-      <SideNotch />
+      {inCall && (
+        <CallOverlay
+          onEnd={endCall}
+          theme={theme}
+          outputs={audioOutputs}
+          outputId={audioOutputId}
+          onSelectOutput={(id) => {
+            setAudioOutputId(id);
+            try {
+              const anyA = audioRef.current as unknown as { setSinkId?: (id: string) => Promise<void> } | null;
+              anyA?.setSinkId?.(resolveSinkId(id)).catch(() => {});
+            } catch {}
+          }}
+        />
+      )}
+      <SideNotch
+        onOpenSettings={() => setSettingsOpen(true)}
+        telegramLink={
+          profile.telegram_bot_username
+            ? `https://t.me/${profile.telegram_bot_username}`
+            : isOwner
+              ? "https://t.me/Iahtbot"
+              : null
+        }
+      />
+      {settingsOpen && (
+        <SettingsPanel
+          token={token}
+          apiUrl={apiUrl}
+          initial={profile}
+          onClose={() => setSettingsOpen(false)}
+          onSaved={(p) => onProfileUpdated(p)}
+        />
+      )}
     </Shell>
   );
 
@@ -550,20 +714,32 @@ function Chat({ token, userAvatar }: { token: string; userAvatar: string | null 
     const ac = callAcRef.current;
     if (!stream || !ac) return null;
     if (ac.state === "suspended") { try { await ac.resume(); } catch {} }
-    const mr = new MediaRecorder(stream, { mimeType: MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" : "" });
+    const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+      ? "audio/webm;codecs=opus"
+      : MediaRecorder.isTypeSupported("audio/webm")
+        ? "audio/webm"
+        : "";
+    const mr = new MediaRecorder(stream, { mimeType, audioBitsPerSecond: 128000 });
     const chunks: Blob[] = [];
     mr.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
     mr.start(100);
 
     const src = ac.createMediaStreamSource(stream);
     const an = ac.createAnalyser();
-    an.fftSize = 1024;
+    an.fftSize = 2048;
+    an.smoothingTimeConstant = 0.85;
     src.connect(an);
     const data = new Uint8Array(an.fftSize);
 
     const start = Date.now();
     let lastLoud = Date.now();
     let sawSound = false;
+    // Adaptive noise floor: sample the room during the first ~400ms of the
+    // window and set the speech threshold above it, so a noisy room doesn't
+    // fool the detector and a quiet room still catches soft speech.
+    let noiseFloor = 0.012;
+    let calibrated = false;
+    const noiseSamples: number[] = [];
     return await new Promise((resolve) => {
       // setInterval keeps ticking even when the tab is hidden/screen off,
       // unlike requestAnimationFrame which pauses.
@@ -572,11 +748,24 @@ function Chat({ token, userAvatar }: { token: string; userAvatar: string | null 
         an.getByteTimeDomainData(data);
         let sum = 0; for (let i = 0; i < data.length; i++) { const v = (data[i] - 128) / 128; sum += v * v; }
         const rms = Math.sqrt(sum / data.length);
-        if (rms > 0.035) { lastLoud = Date.now(); sawSound = true; }
         const now = Date.now();
-        if (sawSound && now - lastLoud > 500) return finish();
-        if (now - start > 20000) return finish();
-        if (!sawSound && now - start > 6000) return finish();
+        if (!calibrated) {
+          noiseSamples.push(rms);
+          if (now - start > 400) {
+            noiseSamples.sort((a, b) => a - b);
+            const median = noiseSamples[Math.floor(noiseSamples.length / 2)] || 0.012;
+            noiseFloor = Math.max(0.008, median);
+            calibrated = true;
+          }
+        }
+        const speechThreshold = Math.max(0.02, noiseFloor * 2.2);
+        if (rms > speechThreshold) { lastLoud = now; sawSound = true; }
+        // Longer silence tail (900ms) so on ne coupe pas au milieu d'une phrase.
+        if (sawSound && now - lastLoud > 900) return finish();
+        // Max 30s per utterance for longer sentences.
+        if (now - start > 30000) return finish();
+        // Wait up to 8s for the user to start talking.
+        if (!sawSound && now - start > 8000) return finish();
       }, 80);
       const finish = () => {
         clearInterval(iv);
@@ -617,19 +806,72 @@ function Bubble({ m, onSpeak, userAvatar }: { m: Msg; onSpeak: () => void; userA
   );
 }
 
-function CallOverlay({ onEnd }: { onEnd: () => void }) {
+function OutputIcon({ kind }: { kind: AudioOutput["kind"] }) {
+  if (kind === "bluetooth") return <Bluetooth className="h-4 w-4 shrink-0" />;
+  if (kind === "earpiece") return <Phone className="h-4 w-4 shrink-0" />;
+  return <Speaker className="h-4 w-4 shrink-0" />;
+}
+
+function CallOverlay({
+  onEnd,
+  theme = "pink",
+  outputs,
+  outputId,
+  onSelectOutput,
+}: {
+  onEnd: () => void;
+  theme?: ThemeId;
+  outputs: AudioOutput[];
+  outputId: string;
+  onSelectOutput: (id: string) => void;
+}) {
+  const t = THEMES[theme] ?? THEMES.pink;
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const current = outputs.find((o) => o.deviceId === outputId);
+  const currentLabel = current?.label || (outputId === "default" ? "Haut-parleur du téléphone" : "Sortie audio");
+  const currentKind = current?.kind || "other";
   return (
     <div className="fixed inset-0 z-50 flex flex-col items-center justify-center text-white"
-         style={{ background: "radial-gradient(circle at 50% 30%, #ff7ab8, #a63fe4 60%, #4a1a7a 100%)" }}>
+         style={{ background: t.callGradient }}>
       <div className="relative">
         <div className="absolute inset-0 rounded-full bg-white/20 blur-2xl animate-pulse" />
-        <div className="relative flex h-40 w-40 items-center justify-center rounded-full bg-white/20 backdrop-blur ring-4 ring-white/40 text-7xl">💖</div>
+        <div className="relative flex h-40 w-40 items-center justify-center overflow-hidden rounded-full bg-white/20 backdrop-blur ring-4 ring-white/40">
+          <img src={lyraAvatar} alt="Lyra" className="h-full w-full object-cover" />
+        </div>
       </div>
       <p className="mt-8 text-2xl font-semibold">Lyra</p>
       <p className="text-white/80 text-sm">Appel en cours…</p>
       <p className="mt-2 text-white/60 text-xs px-8 text-center">Parle après le signal, je réponds toute seule.</p>
+      <button
+        onClick={() => setPickerOpen((v) => !v)}
+        className="mt-6 flex items-center gap-2 rounded-full bg-white/15 backdrop-blur px-4 py-2 text-sm ring-1 ring-white/30 active:scale-95"
+      >
+        <OutputIcon kind={currentKind} />
+        <span className="max-w-[200px] truncate">{currentLabel}</span>
+      </button>
+      {pickerOpen && (
+        <div className="mt-3 w-72 max-h-64 overflow-auto rounded-2xl bg-black/40 backdrop-blur ring-1 ring-white/20 p-2">
+          {outputs.length === 0 && (
+            <div className="px-3 py-2 text-xs text-white/70">Aucune sortie détectée. Assure-toi d'autoriser le micro.</div>
+          )}
+          {outputs.map((o) => {
+            const active = o.deviceId === outputId;
+            return (
+              <button
+                key={o.deviceId}
+                onClick={() => { onSelectOutput(o.deviceId); setPickerOpen(false); }}
+                className={`w-full flex items-center gap-2 rounded-xl px-3 py-2 text-left text-sm ${active ? "bg-white/20" : "hover:bg-white/10"}`}
+              >
+                <OutputIcon kind={o.kind} />
+                <span className="flex-1 truncate">{o.label || "Sortie audio"}</span>
+                {active && <Check className="h-4 w-4 shrink-0" />}
+              </button>
+            );
+          })}
+        </div>
+      )}
       <button onClick={onEnd}
-        className="mt-14 flex h-16 w-16 items-center justify-center rounded-full bg-red-500 shadow-2xl active:scale-95">
+        className="mt-10 flex h-16 w-16 items-center justify-center rounded-full bg-red-500 shadow-2xl active:scale-95">
         <PhoneOff className="h-7 w-7" />
       </button>
     </div>
