@@ -24,6 +24,16 @@ export const Route = createFileRoute("/api/web/tts")({
             voice: "shimmer",
             input: text,
             response_format: "mp3",
+            speed: 1.05,
+            instructions: [
+              "Tu es une jeune femme française qui parle à une amie proche au téléphone.",
+              "Voix chaleureuse, tendre, complice, très expressive et vivante — jamais robotique, jamais monotone.",
+              "Varie l'intonation, le rythme et le volume comme dans une vraie conversation : accélère quand tu es enthousiaste, ralentis pour la tendresse, chuchote parfois pour l'intimité.",
+              "Ajoute des petits sons naturels : légers rires, soupirs doux, 'mmh', 'ah', hésitations comme 'euh' quand c'est naturel.",
+              "Fais des micro-pauses de respiration entre les idées, respire comme une vraie personne.",
+              "Souris en parlant, laisse transparaître l'émotion — joie, tendresse, surprise, empathie — sans jamais réciter.",
+              "Accent français de France, naturel et doux, comme une copine au bout du fil.",
+            ].join(" "),
           }),
         });
         if (!res.ok) {

@@ -419,6 +419,15 @@ function Chat({
     }
     flushSentences(true);
     setSending(false);
+    if (res.headers.get("X-Lyra-Image") === "1") {
+      try {
+        const r = await fetch(apiUrl("/api/web/history"), { headers: authH });
+        if (r.ok) {
+          const j = await r.json();
+          setMsgs((j.messages || []).map((m: any) => ({ id: m.id, role: m.role, content: m.content, images: m.images || [] })));
+        }
+      } catch {}
+    }
     return full;
   }
 
@@ -629,11 +638,13 @@ function Chat({
       return;
     }
     enqueueSpeak("Coucou ma belle, je t'écoute.");
+    await speakQueueRef.current;
     while (callActiveRef.current) {
       const blob = await recordUntilSilence();
       if (!callActiveRef.current) break;
-      // Seuil plus strict — sous ~6 Ko c'est du silence, on n'envoie pas.
-      if (!blob || blob.size < 6000) continue;
+      // Ne jamais envoyer une fenêtre sans vraie voix au serveur :
+      // le STT peut inventer des mots sur du silence compressé.
+      if (!blob || blob.size < 15000) continue;
       const text = await transcribe(blob);
       if (!text || text.trim().length < 2) continue;
       await sendText(text, null, (s) => { if (callActiveRef.current) enqueueSpeak(s); });
@@ -789,7 +800,8 @@ function Chat({
     </Shell>
   );
 
-  // Record until ~0.8s of silence, or 20s max — reuses the persistent call stream
+  // Record until ~0.9s of silence, or 30s max — reuses the persistent call stream.
+  // Returns null when no sustained human voice was detected.
   async function recordUntilSilence(): Promise<Blob | null> {
     const stream = callStreamRef.current;
     const ac = callAcRef.current;
@@ -815,6 +827,10 @@ function Chat({
     const start = Date.now();
     let lastLoud = Date.now();
     let sawSound = false;
+    let confirmedSpeech = false;
+    let loudFrames = 0;
+    let voicedMs = 0;
+    let peakRms = 0;
     // Adaptive noise floor: sample the room during the first ~400ms of the
     // window and set the speech threshold above it, so a noisy room doesn't
     // fool the detector and a quiet room still catches soft speech.
@@ -839,8 +855,15 @@ function Chat({
             calibrated = true;
           }
         }
-        const speechThreshold = Math.max(0.02, noiseFloor * 2.2);
-        if (rms > speechThreshold) { lastLoud = now; sawSound = true; }
+        peakRms = Math.max(peakRms, rms);
+        const speechThreshold = Math.max(0.035, noiseFloor * 3.2);
+        if (rms > speechThreshold) {
+          lastLoud = now;
+          sawSound = true;
+          loudFrames += 1;
+          voicedMs += 80;
+          if (voicedMs >= 360 && loudFrames >= 4 && peakRms >= speechThreshold * 1.2) confirmedSpeech = true;
+        }
         // Longer silence tail (900ms) so on ne coupe pas au milieu d'une phrase.
         if (sawSound && now - lastLoud > 900) return finish();
         // Max 30s per utterance for longer sentences.
@@ -852,7 +875,13 @@ function Chat({
         clearInterval(iv);
         try { mr.stop(); } catch {}
         try { src.disconnect(); an.disconnect(); } catch {}
-        setTimeout(() => resolve(new Blob(chunks, { type: "audio/webm" })), 100);
+        setTimeout(() => {
+          if (!confirmedSpeech) {
+            resolve(null);
+            return;
+          }
+          resolve(new Blob(chunks, { type: "audio/webm" }));
+        }, 100);
       };
     });
   }

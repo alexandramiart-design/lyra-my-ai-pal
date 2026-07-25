@@ -17,8 +17,8 @@ export const Route = createFileRoute("/api/web/transcribe")({
 
         // Guard against silence / near-empty audio → sinon gpt-4o-transcribe
         // hallucine des phrases ("Merci.", "Sous-titres…", ou reprend le prompt).
-        // Seuil relevé : en dessous de ~15 Ko webm/opus = quasi silence.
-        if (file.size < 15000) {
+        // Seuil relevé : en dessous de ~25 Ko webm/opus = quasi silence/bruit.
+        if (file.size < 25000) {
           return withWebCors(Response.json({ text: "" }));
         }
 
@@ -49,8 +49,8 @@ export const Route = createFileRoute("/api/web/transcribe")({
           "merci", "merci .", "merci d avoir regarde", "merci d avoir regarde cette video",
           "sous titres realises par la communaute d amara org",
           "sous titrage st 501", "sous titres", "abonnez vous",
-          "je vous remercie", "a bientot", "au revoir",
-          "bonne journee", "bonne soiree", "…", ".",
+          "je vous remercie", "a bientot", "au revoir", "salut",
+          "bonne journee", "bonne soiree", "hello", "hello world", "bonjour", "bonsoir", "…", ".",
         ];
         const HALLUCINATION_PREFIXES = [
           "sous titres", "sous titrage", "merci d avoir regarde",
@@ -61,7 +61,10 @@ export const Route = createFileRoute("/api/web/transcribe")({
         // Filtre aussi les transcriptions ultra-courtes (1-2 mots) qui sont
         // presque toujours des hallucinations sur du silence.
         const wordCount = norm.split(" ").filter(Boolean).length;
-        if (!raw || raw.length < 3 || wordCount < 2 || HALLUCINATIONS.includes(norm) || isHallucinationPrefix) {
+        if (!raw || raw.length < 4 || wordCount < 2 || HALLUCINATIONS.includes(norm) || isHallucinationPrefix) {
+          return withWebCors(Response.json({ text: "" }));
+        }
+        if (wordCount <= 2 && raw.length <= 16) {
           return withWebCors(Response.json({ text: "" }));
         }
         // Rejette aussi les répétitions du même mot (autre pattern d'hallu Whisper)
