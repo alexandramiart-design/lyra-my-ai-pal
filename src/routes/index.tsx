@@ -807,9 +807,9 @@ function Bubble({ m, onSpeak, userAvatar }: { m: Msg; onSpeak: () => void; userA
 }
 
 function OutputIcon({ kind }: { kind: AudioOutput["kind"] }) {
-  if (kind === "bluetooth") return <Bluetooth className="h-4 w-4 shrink-0" />;
-  if (kind === "earpiece") return <Phone className="h-4 w-4 shrink-0" />;
-  return <Speaker className="h-4 w-4 shrink-0" />;
+  if (kind === "bluetooth") return <Bluetooth className="h-5 w-5 shrink-0 text-slate-700" />;
+  if (kind === "earpiece") return <Phone className="h-5 w-5 shrink-0 text-slate-700" />;
+  return <Speaker className="h-5 w-5 shrink-0 text-slate-700" />;
 }
 
 function CallOverlay({
@@ -830,6 +830,8 @@ function CallOverlay({
   const current = outputs.find((o) => o.deviceId === outputId);
   const currentLabel = current?.label || (outputId === "default" ? "Haut-parleur du téléphone" : "Sortie audio");
   const currentKind = current?.kind || "other";
+  const hasBluetooth = outputs.some((o) => o.kind === "bluetooth");
+  const sheetTitle = hasBluetooth ? "Bluetooth" : "Sortie audio";
   return (
     <div className="fixed inset-0 z-50 flex flex-col items-center justify-center text-white"
          style={{ background: t.callGradient }}>
@@ -841,39 +843,55 @@ function CallOverlay({
       </div>
       <p className="mt-8 text-2xl font-semibold">Lyra</p>
       <p className="text-white/80 text-sm">Appel en cours…</p>
-      <p className="mt-2 text-white/60 text-xs px-8 text-center">Parle après le signal, je réponds toute seule.</p>
       <button
         onClick={() => setPickerOpen((v) => !v)}
-        className="mt-6 flex items-center gap-2 rounded-full bg-white/15 backdrop-blur px-4 py-2 text-sm ring-1 ring-white/30 active:scale-95"
+        className="mt-8 flex items-center gap-2 rounded-full bg-white/15 backdrop-blur px-4 py-2 text-sm ring-1 ring-white/30 active:scale-95"
       >
-        <OutputIcon kind={currentKind} />
+        {currentKind === "bluetooth" ? <Bluetooth className="h-4 w-4" /> : currentKind === "earpiece" ? <Phone className="h-4 w-4" /> : <Speaker className="h-4 w-4" />}
         <span className="max-w-[200px] truncate">{currentLabel}</span>
       </button>
-      {pickerOpen && (
-        <div className="mt-3 w-72 max-h-64 overflow-auto rounded-2xl bg-black/40 backdrop-blur ring-1 ring-white/20 p-2">
-          {outputs.length === 0 && (
-            <div className="px-3 py-2 text-xs text-white/70">Aucune sortie détectée. Assure-toi d'autoriser le micro.</div>
-          )}
-          {outputs.map((o) => {
-            const active = o.deviceId === outputId;
-            return (
-              <button
-                key={o.deviceId}
-                onClick={() => { onSelectOutput(o.deviceId); setPickerOpen(false); }}
-                className={`w-full flex items-center gap-2 rounded-xl px-3 py-2 text-left text-sm ${active ? "bg-white/20" : "hover:bg-white/10"}`}
-              >
-                <OutputIcon kind={o.kind} />
-                <span className="flex-1 truncate">{o.label || "Sortie audio"}</span>
-                {active && <Check className="h-4 w-4 shrink-0" />}
-              </button>
-            );
-          })}
-        </div>
-      )}
       <button onClick={onEnd}
         className="mt-10 flex h-16 w-16 items-center justify-center rounded-full bg-red-500 shadow-2xl active:scale-95">
         <PhoneOff className="h-7 w-7" />
       </button>
+      {pickerOpen && (
+        <>
+          <button
+            aria-label="Fermer"
+            onClick={() => setPickerOpen(false)}
+            className="fixed inset-0 z-40 bg-black/40"
+          />
+          <div className="fixed inset-x-0 bottom-0 z-50 rounded-t-3xl bg-[#eef0f3] px-4 pt-4 pb-6 text-slate-900 shadow-2xl">
+            <div className="mb-3 flex items-center justify-between px-1">
+              <span className="text-base font-medium text-slate-800">{sheetTitle}</span>
+              <button onClick={() => setPickerOpen(false)} className="rounded-full p-1 active:bg-black/10">
+                <X className="h-5 w-5 text-slate-700" />
+              </button>
+            </div>
+            <div className="overflow-hidden rounded-2xl bg-white divide-y divide-slate-100">
+              {outputs.length === 0 && (
+                <div className="px-4 py-3 text-sm text-slate-500">Aucune sortie détectée. Autorise le micro.</div>
+              )}
+              {outputs.map((o) => {
+                const active = o.deviceId === outputId;
+                return (
+                  <button
+                    key={o.deviceId}
+                    onClick={() => { onSelectOutput(o.deviceId); setPickerOpen(false); }}
+                    className="flex w-full items-center gap-4 px-4 py-4 text-left active:bg-slate-100"
+                  >
+                    <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full ${o.kind === "bluetooth" ? "bg-indigo-100" : "bg-slate-100"}`}>
+                      <OutputIcon kind={o.kind} />
+                    </span>
+                    <span className="flex-1 truncate text-[15px] text-slate-900">{o.label || "Sortie audio"}</span>
+                    {active && <Check className="h-5 w-5 shrink-0 text-blue-600" strokeWidth={3} />}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }
