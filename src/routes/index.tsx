@@ -8,6 +8,7 @@ import { SideNotch } from "@/components/side-notch";
 import { Onboarding } from "@/components/onboarding";
 import { SettingsPanel } from "@/components/settings-panel";
 import { THEMES, type ThemeId } from "@/lib/themes";
+import { hasNativeAudioRouter, listNativeOutputs, setNativeOutput, resetNativeOutput, type NativeAudioKind } from "@/lib/audio-router";
 import lyraAvatarAsset from "@/assets/lyra-avatar.png.asset.json";
 import userAvatarAsset from "@/assets/user-avatar.png.asset.json";
 const lyraAvatar = lyraAvatarAsset.url;
@@ -39,24 +40,58 @@ function classifyAudioOutput(label: string): AudioOutput["kind"] {
 }
 
 function normalizeAudioOutputs(devices: MediaDeviceInfo[]): AudioOutput[] {
-  const raw = devices.filter((d) => d.kind === "audiooutput");
-  const bluetooth = raw
-    .filter((d) => classifyAudioOutput(d.label || "") === "bluetooth")
-    .map((d) => ({
-      deviceId: d.deviceId,
-      label: d.label?.trim() || "Casque Bluetooth",
-      kind: "bluetooth" as const,
-    }));
-
-  // On veut toujours exposer exactement deux sorties intégrées :
-  // l'écouteur d'oreille et le haut-parleur principal.
-  const builtIn = raw.find((d) => d.deviceId === "default") || raw.find((d) => classifyAudioOutput(d.label || "") !== "bluetooth");
-  const baseId = builtIn?.deviceId ?? "default";
+  const raw = devices.filter((d) => d.kind === "audiooutput" && d.deviceId !== "communications");
+  const bluetooth: AudioOutput[] = [];
+  const seenBt = new Set<string>();
+  let earpieceDev: MediaDeviceInfo | undefined;
+  let speakerDev: MediaDeviceInfo | undefined;
+  for (const d of raw) {
+    const label = d.label?.trim() || "";
+    const kind = classifyAudioOutput(label);
+    if (kind === "bluetooth") {
+      const key = label.toLowerCase();
+      if (seenBt.has(key)) continue;
+      seenBt.add(key);
+      bluetooth.push({ deviceId: d.deviceId, label: label || "Casque Bluetooth", kind: "bluetooth" });
+    } else if (kind === "earpiece" && !earpieceDev) {
+      earpieceDev = d;
+    } else if (kind === "speakerphone" && !speakerDev) {
+      speakerDev = d;
+    }
+  }
+  const defaultDev = raw.find((d) => d.deviceId === "default");
+  const fallbackId = earpieceDev?.deviceId || speakerDev?.deviceId || defaultDev?.deviceId || "default";
   const outs: AudioOutput[] = [
-    { deviceId: baseId + "#earpiece", label: "Téléphone", kind: "earpiece" },
-    { deviceId: baseId + "#speakerphone", label: "Haut-parleur", kind: "speakerphone" },
+    { deviceId: (earpieceDev?.deviceId || fallbackId) + "#earpiece", label: "Téléphone", kind: "earpiece" },
+    { deviceId: (speakerDev?.deviceId || fallbackId) + "#speakerphone", label: "Haut-parleur", kind: "speakerphone" },
     ...bluetooth,
   ];
+  return outs;
+}
+
+// Build AudioOutput[] from the native Android AudioRouter plugin.
+// deviceId is encoded as "native:<kind>:<id>" so onSelectOutput can route natively.
+async function nativeAudioOutputs(): Promise<AudioOutput[]> {
+  const devs = await listNativeOutputs();
+  if (!devs.length) return [];
+  const outs: AudioOutput[] = [];
+  const seen = new Set<string>();
+  // Always show Téléphone + Haut-parleur first, then any BT/wired headset.
+  const ear = devs.find((d) => d.kind === "earpiece");
+  const spk = devs.find((d) => d.kind === "speakerphone");
+  outs.push({ deviceId: `native:earpiece:${ear?.id ?? "earpiece"}`, label: "Téléphone", kind: "earpiece" });
+  outs.push({ deviceId: `native:speakerphone:${spk?.id ?? "speakerphone"}`, label: "Haut-parleur", kind: "speakerphone" });
+  for (const d of devs) {
+    if (d.kind !== "bluetooth" && d.kind !== "wired") continue;
+    const key = `${d.kind}:${(d.label || "").toLowerCase()}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    outs.push({
+      deviceId: `native:${d.kind}:${d.id}`,
+      label: d.label || (d.kind === "bluetooth" ? "Casque Bluetooth" : "Écouteurs filaires"),
+      kind: "bluetooth",
+    });
+  }
   return outs;
 }
 
@@ -309,6 +344,13 @@ function Chat({
   const [audioOutputs, setAudioOutputs] = useState<AudioOutput[]>([]);
   const [audioOutputId, setAudioOutputId] = useState<string>("default");
 
+  // Apply the current audio route natively whenever it changes.
+  useEffect(() => {
+    if (!audioOutputId?.startsWith("native:")) return;
+    const [, k, nid] = audioOutputId.split(":");
+    setNativeOutput(k as NativeAudioKind, nid).catch(() => {});
+  }, [audioOutputId]);
+
   const authH = { Authorization: `Bearer ${token}` };
 
   useEffect(() => {
@@ -512,6 +554,8 @@ function Chat({
   const callStreamRef = useRef<MediaStream | null>(null);
   const callAcRef = useRef<AudioContext | null>(null);
   const keepAliveRef = useRef<number | null>(null);
+  const deviceChangeHandlerRef = useRef<(() => void) | null>(null);
+  const nativePollRef = useRef<number | null>(null);
 
   async function acquireWakeLock() {
     try {
@@ -547,12 +591,37 @@ function Chat({
       callStreamRef.current = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
       callAcRef.current = new AudioContext();
       try {
-        const devs = await navigator.mediaDevices.enumerateDevices();
-        const outs = normalizeAudioOutputs(devs);
-        setAudioOutputs(outs);
-        const bt = outs.find((o) => o.kind === "bluetooth");
-        const ear = outs.find((o) => o.kind === "earpiece");
-        setAudioOutputId((prev) => (prev && prev !== "default" ? prev : (bt?.deviceId || ear?.deviceId || "default")));
+        const refreshOutputs = async () => {
+          let outs: AudioOutput[] = [];
+          if (hasNativeAudioRouter()) {
+            outs = await nativeAudioOutputs();
+          }
+          if (!outs.length) {
+            const devs = await navigator.mediaDevices.enumerateDevices();
+            outs = normalizeAudioOutputs(devs);
+          }
+          setAudioOutputs(outs);
+          setAudioOutputId((prev) => {
+            // Si la sortie précédente existe toujours, on la garde.
+            if (prev && outs.some((o) => o.deviceId === prev)) return prev;
+            // Nouveau casque branché → on bascule dessus automatiquement.
+            const bt = outs.find((o) => o.kind === "bluetooth");
+            if (bt) return bt.deviceId;
+            // Défaut « comme un vrai appel » : écouteur du haut.
+            const ear = outs.find((o) => o.kind === "earpiece");
+            return ear?.deviceId || outs[0]?.deviceId || "default";
+          });
+        };
+        await refreshOutputs();
+        const handler = () => { refreshOutputs().catch(() => {}); };
+        navigator.mediaDevices.addEventListener?.("devicechange", handler);
+        deviceChangeHandlerRef.current = handler;
+        // Poll every 3s on native — Android WebView doesn't always fire
+        // devicechange when a Bluetooth headset connects/disconnects.
+        if (hasNativeAudioRouter()) {
+          const iv = window.setInterval(() => { refreshOutputs().catch(() => {}); }, 3000);
+          nativePollRef.current = iv;
+        }
       } catch {}
     } catch {
       endCall();
@@ -579,6 +648,12 @@ function Chat({
     audioRef.current?.pause();
     releaseWakeLock();
     if (keepAliveRef.current) { clearInterval(keepAliveRef.current); keepAliveRef.current = null; }
+    if (deviceChangeHandlerRef.current) {
+      try { navigator.mediaDevices.removeEventListener?.("devicechange", deviceChangeHandlerRef.current); } catch {}
+      deviceChangeHandlerRef.current = null;
+    }
+    if (nativePollRef.current) { clearInterval(nativePollRef.current); nativePollRef.current = null; }
+    resetNativeOutput().catch(() => {});
     try { callStreamRef.current?.getTracks().forEach((t) => t.stop()); } catch {}
     callStreamRef.current = null;
     try { callAcRef.current?.close(); } catch {}
@@ -679,6 +754,12 @@ function Chat({
           outputId={audioOutputId}
           onSelectOutput={(id) => {
             setAudioOutputId(id);
+            // Native routing (Android): "native:<kind>:<id>" → AudioRouter plugin.
+            if (id.startsWith("native:")) {
+              const [, k, nid] = id.split(":");
+              setNativeOutput(k as NativeAudioKind, nid).catch(() => {});
+              return;
+            }
             try {
               const anyA = audioRef.current as unknown as { setSinkId?: (id: string) => Promise<void> } | null;
               anyA?.setSinkId?.(resolveSinkId(id)).catch(() => {});
