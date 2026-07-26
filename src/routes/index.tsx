@@ -335,6 +335,7 @@ function Chat({
   const [input, setInput] = useState("");
   const [pendingImgs, setPendingImgs] = useState<string[]>([]);
   const [sending, setSending] = useState(false);
+  const [imageGenerating, setImageGenerating] = useState(false);
   const [recording, setRecording] = useState(false);
   const [inCall, setInCall] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -367,10 +368,19 @@ function Chat({
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [msgs, sending]);
 
+  function isImageRequest(text: string) {
+    const lower = text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    const hasVisualNoun = /(image|images|photo|photos|dessin|dessins|illustration|tableau|portrait|logo|affiche|wallpaper|fond d'ecran|selfie|avatar|visuel)/i.test(lower);
+    const hasCreateVerb = /(dessin\w*|gener\w*|cre\w*|fabriq\w*|peins|peindre|fais(?:-|\s)?moi|imagine(?:-|\s)?moi|montre(?:-|\s)?moi|envoie(?:-|\s)?moi|donne(?:-|\s)?moi)/i.test(lower);
+    const shortcut = /^(dessin\w*|gener\w*|cre\w*|fais)\b/i.test(lower);
+    return (hasVisualNoun && hasCreateVerb) || shortcut;
+  }
+
   async function sendText(text: string, images?: string[] | null, onSentence?: (s: string) => void) {
     const imgs = images && images.length ? images : [];
     if (!text.trim() && imgs.length === 0) return;
     setSending(true);
+    setImageGenerating(imgs.length === 0 && isImageRequest(text));
     const localUser: Msg = { id: crypto.randomUUID(), role: "user", content: text, images: imgs };
     setMsgs((m) => [...m, localUser]);
     setInput(""); setPendingImgs([]);
@@ -384,6 +394,7 @@ function Chat({
       const err = await res.text().catch(() => "erreur");
       setMsgs((m) => [...m, { id: crypto.randomUUID(), role: "assistant", content: `❌ ${err.slice(0, 200)}` }]);
       setSending(false);
+      setImageGenerating(false);
       return "";
     }
     const assistantId = crypto.randomUUID();
@@ -419,6 +430,7 @@ function Chat({
     }
     flushSentences(true);
     setSending(false);
+    setImageGenerating(false);
     if (res.headers.get("X-Lyra-Image") === "1") {
       try {
         const r = await fetch(apiUrl("/api/web/history"), { headers: authH });
@@ -706,7 +718,16 @@ function Chat({
         {sending && (
           <div className="flex items-end gap-2 pl-1">
             <img src={lyraAvatar} alt="" className="h-7 w-7 rounded-full object-cover ring-1 ring-white/40" />
-            <div className="rounded-3xl rounded-bl-md bg-white/20 px-4 py-2 text-xs text-white/80 backdrop-blur ring-1 ring-white/30">Lyra écrit…</div>
+            <div className="rounded-3xl rounded-bl-md bg-white/20 px-4 py-2 text-xs text-white/80 backdrop-blur ring-1 ring-white/30">
+              {imageGenerating ? (
+                <span className="flex items-center gap-1.5">
+                  <ImagePlus className="h-3.5 w-3.5" />
+                  génération de l'image en cours…
+                </span>
+              ) : (
+                "Lyra écrit…"
+              )}
+            </div>
           </div>
         )}
       </div>

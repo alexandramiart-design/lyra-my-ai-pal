@@ -3,6 +3,77 @@ import { requireAuthenticated, serviceClient, buildLyraPrompt, webCorsPreflight,
 
 type Part = { type: "text"; text: string } | { type: "image_url"; image_url: { url: string } };
 
+type ImageGatewayResponse = {
+  data?: Array<{ b64_json?: string; url?: string }>;
+  choices?: Array<{
+    message?: {
+      images?: Array<{ image_url?: { url?: string }; url?: string }>;
+    };
+  }>;
+  error?: { message?: string };
+};
+
+async function enhanceImagePrompt(key: string, text: string): Promise<string> {
+  try {
+    const r = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Lovable-API-Key": key },
+      body: JSON.stringify({
+        model: "google/gemini-3-flash-preview",
+        messages: [
+          {
+            role: "system",
+            content:
+              "You rewrite a user's short (often French) image request into ONE rich English image-generation prompt. Rules: keep the user's exact subject and intent, never change it. Make emotions REAL and human: describe the precise facial expression (eye crinkles, open mouth laugh with visible teeth, raised cheeks, head tilted back for laughter; watery eyes and downturned mouth for sadness), body language and hands. Add photographic detail: camera framing, 50mm lens, natural lighting, depth of field, skin texture with pores and imperfections, realistic hair. Avoid plastic/CGI/airbrushed looks, avoid text or watermarks. If the request is clearly a drawing/cartoon/illustration, keep that style instead of photorealism but still make the emotion expressive. Answer with the prompt only, no quotes, no preamble, max 90 words.",
+          },
+          { role: "user", content: text },
+        ],
+      }),
+    });
+    if (!r.ok) return text;
+    const j = (await r.json()) as { choices?: Array<{ message?: { content?: unknown } }> };
+    const out = j?.choices?.[0]?.message?.content;
+    return typeof out === "string" && out.trim().length > 10 ? out.trim() : text;
+  } catch {
+    return text;
+  }
+}
+
+function imageResponseToDataUrl(json: ImageGatewayResponse): string | null {
+  const direct = json.data?.[0]?.b64_json;
+  if (direct) return `data:image/png;base64,${direct}`;
+  const dataUrl = json.data?.[0]?.url;
+  if (dataUrl) return dataUrl;
+  const messageImage = json.choices?.[0]?.message?.images?.[0];
+  return messageImage?.image_url?.url ?? messageImage?.url ?? null;
+}
+
+async function generateImageDataUrl(key: string, prompt: string): Promise<string | null> {
+  const models = ["google/gemini-3.1-flash-image", "google/gemini-3-pro-image"];
+  for (const model of models) {
+    try {
+      const response = await fetch("https://ai.gateway.lovable.dev/v1/images/generations", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${key}`,
+          "Lovable-API-Key": key,
+        },
+        body: JSON.stringify({
+          model,
+          messages: [{ role: "user", content: prompt }],
+          modalities: ["image", "text"],
+        }),
+      });
+      if (!response.ok) continue;
+      const json = (await response.json()) as ImageGatewayResponse;
+      const dataUrl = imageResponseToDataUrl(json);
+      if (dataUrl) return dataUrl;
+    } catch {}
+  }
+  return null;
+}
+
 export const Route = createFileRoute("/api/web/chat")({
   server: {
     handlers: {
@@ -25,93 +96,31 @@ export const Route = createFileRoute("/api/web/chat")({
         const sb = serviceClient();
 
         // Détection d'une demande de génération d'image (large)
-        const lower = text.toLowerCase();
-        const hasVisualNoun = /(image|images|photo|photos|dessin|dessins|illustration|tableau|portrait|logo|affiche|wallpaper|fond d'écran|selfie)/i.test(lower);
-        const hasCreateVerb = /(dessine|dessines|dessiner|génère|genere|générer|generer|crée|cree|créer|creer|fais(?:-|\s)?moi|fabrique|imagine(?:-|\s)?moi|montre(?:-|\s)?moi|envoie(?:-|\s)?moi|donne(?:-|\s)?moi|peins|dessine(?:-|\s)?moi)/i.test(lower);
-        const shortcut = /^(dessine|dessines|génère|genere|crée|cree|fais)\b/i.test(lower);
+        // Normalisation sans accents pour matcher "créé", "genere", "dessiné"...
+        const lower = text
+          .toLowerCase()
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "");
+        const hasVisualNoun = /(image|images|photo|photos|dessin|dessins|illustration|tableau|portrait|logo|affiche|wallpaper|fond d'ecran|selfie|avatar|visuel)/i.test(lower);
+        const hasCreateVerb = /(dessin\w*|gener\w*|cre\w*|fabriq\w*|peins|peindre|fais(?:-|\s)?moi|imagine(?:-|\s)?moi|montre(?:-|\s)?moi|envoie(?:-|\s)?moi|donne(?:-|\s)?moi)/i.test(lower);
+        const shortcut = /^(dessin\w*|gener\w*|cre\w*|fais)\b/i.test(lower);
         const imageIntent = (hasVisualNoun && hasCreateVerb) || shortcut;
         if (imageIntent && images.length === 0) {
           await sb.from("web_messages").insert({
             user_id: auth.userId, role: "user", content: text, images: [],
           });
-          // Prépare le contexte pour la réponse texte de Lyra
-          const { data: profileImg } = await sb
-            .from("user_profiles")
-            .select("display_name, gender, in_transition")
-            .eq("user_id", auth.userId)
-            .maybeSingle();
-          const sysImg = buildLyraPrompt(profileImg ?? null, auth.email);
           const encoder = new TextEncoder();
           const stream = new ReadableStream({
             async start(controller) {
-              let assistantText = "";
+              let assistantText = "Je te crée ça, ma belle 🎨";
               let dataUrl: string | null = null;
-              // Lance image + texte en parallèle
-              const imgPromise = fetch("https://ai.gateway.lovable.dev/v1/images/generations", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json", "Lovable-API-Key": key },
-                  body: JSON.stringify({
-                    model: "google/gemini-3.1-flash-image",
-                    messages: [{ role: "user", content: text }],
-                    modalities: ["image", "text"],
-                  }),
-              });
-              // Stream la réponse texte pendant que l'image se génère
+              controller.enqueue(encoder.encode(assistantText));
               try {
-                const txtRes = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json", "Lovable-API-Key": key },
-                  body: JSON.stringify({
-                    model: "google/gemini-3-flash-preview",
-                    stream: true,
-                    messages: [
-                      { role: "system", content: sysImg + "\n\nTu es en train de dessiner/générer une image pour l'utilisateur. Réponds naturellement en une ou deux phrases chaleureuses pour accompagner l'image (dis ce que tu dessines, ton ressenti, une petite note perso). Ne dis PAS 'voici l'image' ni de méta-commentaire technique." },
-                      { role: "user", content: text },
-                    ],
-                  }),
-                });
-                if (txtRes.ok && txtRes.body) {
-                  const reader = txtRes.body.getReader();
-                  const dec = new TextDecoder();
-                  let buf = "";
-                  while (true) {
-                    const { done, value } = await reader.read();
-                    if (done) break;
-                    buf += dec.decode(value, { stream: true });
-                    const lines = buf.split("\n");
-                    buf = lines.pop() ?? "";
-                    for (const line of lines) {
-                      const tt = line.trim();
-                      if (!tt.startsWith("data:")) continue;
-                      const payload = tt.slice(5).trim();
-                      if (payload === "[DONE]") continue;
-                      try {
-                        const j = JSON.parse(payload);
-                        const delta = j.choices?.[0]?.delta?.content;
-                        if (typeof delta === "string" && delta) {
-                          assistantText += delta;
-                          controller.enqueue(encoder.encode(delta));
-                        }
-                      } catch {}
-                    }
-                  }
-                }
-              } catch {}
-              if (!assistantText.trim()) {
-                assistantText = "Voilà, je t'ai fait ça 🎨";
-                controller.enqueue(encoder.encode(assistantText));
-              }
-              // Attend l'image
-              try {
-                const imgRes = await imgPromise;
-                if (imgRes.ok) {
-                  const j: any = await imgRes.json();
-                  const b64 = j?.data?.[0]?.b64_json;
-                  if (b64) dataUrl = `data:image/png;base64,${b64}`;
-                }
+                const finalPrompt = await enhanceImagePrompt(key, text);
+                dataUrl = await generateImageDataUrl(key, finalPrompt);
               } catch {}
               if (!dataUrl) {
-                const warn = "\n\n(Oh mince, l'image a pas voulu sortir 😕)";
+                const warn = "\n\nOh mince, l'image n'a pas réussi à sortir. Réessaie avec une description un peu plus précise 💕";
                 assistantText += warn;
                 controller.enqueue(encoder.encode(warn));
               }
@@ -186,6 +195,8 @@ export const Route = createFileRoute("/api/web/chat")({
           async start(controller) {
             const reader = upstream.body!.getReader();
             let buf = "";
+            let holding = false; // once a "{" appears, buffer until the end (possible tool JSON)
+            let held = "";
             try {
               while (true) {
                 const { done, value } = await reader.read();
@@ -203,22 +214,49 @@ export const Route = createFileRoute("/api/web/chat")({
                     const delta = j.choices?.[0]?.delta?.content;
                     if (typeof delta === "string" && delta) {
                       full += delta;
-                      controller.enqueue(encoder.encode(delta));
+                      if (!holding && delta.includes("{")) holding = true;
+                      if (holding) held += delta;
+                      else controller.enqueue(encoder.encode(delta));
                     }
                   } catch {}
                 }
               }
             } finally {
+              // The model sometimes emits a { "action": "generate_image", "prompt": "..." }
+              // block instead of triggering the image path. Honour it here.
+              let dataUrl: string | null = null;
+              const match = full.match(/\{[^{}]*"action"\s*:\s*"generate_image"[^{}]*\}/);
+              if (match) {
+                let imgPrompt = "";
+                try {
+                  imgPrompt = String(JSON.parse(match[0]).prompt ?? "");
+                } catch {
+                  imgPrompt = match[0].match(/"prompt"\s*:\s*"([^"]+)"/)?.[1] ?? "";
+                }
+                if (imgPrompt) {
+                  try { dataUrl = await generateImageDataUrl(key, imgPrompt); } catch {}
+                }
+                full = full.replace(match[0], "").replace(/\n{3,}/g, "\n\n").trim();
+                held = held.replace(match[0], "").replace(/\n{3,}/g, "\n\n");
+              }
+              if (held) controller.enqueue(encoder.encode(held));
               if (full) {
                 await sb.from("web_messages").insert({
-                  user_id: auth.userId, role: "assistant", content: full, images: [],
+                  user_id: auth.userId,
+                  role: "assistant",
+                  content: full,
+                  images: dataUrl ? [dataUrl] : [],
                 });
               }
               controller.close();
             }
           },
         });
-        return withWebCors(new Response(stream, { headers: { "Content-Type": "text/plain; charset=utf-8" } }));
+        return withWebCors(
+          new Response(stream, {
+            headers: { "Content-Type": "text/plain; charset=utf-8", "X-Lyra-Image": "1" },
+          }),
+        );
       },
     },
   },
