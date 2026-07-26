@@ -5,6 +5,7 @@ import tsConfigPaths from "vite-tsconfig-paths";
 
 export default defineConfig({
   root: "mobile",
+  base: "./",
   envDir: "..",
   plugins: [react(), tailwindcss(), tsConfigPaths()],
   build: {

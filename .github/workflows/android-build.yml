@@ -33,7 +33,11 @@ jobs:
         run: bun install --frozen-lockfile || bun install
 
       - name: Build web app
-        run: bun run build
+        run: bun run build:mobile
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL || 'https://ahruxtanpjpqmkqxweti.supabase.co' }}
+          VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_J2hQwagmshPBseZEttc69A_MlxAJ0KL' }}
+          VITE_SUPABASE_PROJECT_ID: ${{ secrets.VITE_SUPABASE_PROJECT_ID || 'ahruxtanpjpqmkqxweti' }}
 
       - name: Capacitor sync
         run: bunx cap sync android
