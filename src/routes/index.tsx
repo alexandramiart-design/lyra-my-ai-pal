@@ -717,7 +717,11 @@ function Chat({
         ))}
         {sending && (
           <div className="flex items-end gap-2 pl-1">
-            <img src={lyraAvatar} alt="" className="h-7 w-7 rounded-full object-cover ring-1 ring-white/40" />
+            {imageGenerating ? (
+              <div className="h-7 w-7 shrink-0" aria-hidden />
+            ) : (
+              <img src={lyraAvatar} alt="" className="h-7 w-7 rounded-full object-cover ring-1 ring-white/40" />
+            )}
             <div className="rounded-3xl rounded-bl-md bg-white/20 px-4 py-2 text-xs text-white/80 backdrop-blur ring-1 ring-white/30">
               {imageGenerating ? (
                 <span className="flex items-center gap-1.5">
