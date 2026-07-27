@@ -1,5 +1,6 @@
 FROM oven/bun:1 AS build
 WORKDIR /app
+ENV NITRO_PRESET=bun
 COPY package.json bun.lock* bunfig.toml ./
 RUN bun install --frozen-lockfile || bun install
 COPY . .
