@@ -11,7 +11,7 @@ fi
 
 cd "$(dirname "$0")"
 
-# --- Choix automatique du modèld selon la RAM disponible ---
+# --- Choix automatique du modèle selon la RAM disponible ---
 RAM_MB=$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo)
 if   [ "$RAM_MB" -ge 15000 ]; then MODEL="qwen2.5:7b-instruct";   FAST="qwen2.5:3b-instruct"
 elif [ "$RAM_MB" -ge 7500  ]; then MODEL="qwen2.5:3b-instruct";   FAST="qwen2.5:1.5b-instruct"
@@ -25,12 +25,22 @@ echo "==> RAM détectée : ${RAM_MB} Mo -> modèle ${MODEL}"
 
 if [ ! -f .env ]; then
   echo "==> Création du fichier .env"
-  cp .env.example .env
   PW="$(openssl rand -hex 16)"
-  sed -i "s/CHANGE_ME_DB/$PW/g" .env
+  cat > .env <<EOF
+DB_PASSWORD=$PW
+DATABASE_URL=postgres://lyra:$PW@db:5432/lyra
+LYRA_AI_BASE_URL=http://gateway/v1
+LYRA_AI_KEY=local
+LYRA_CHAT_MODEL=$MODEL
+LYRA_FAST_MODEL=$FAST
+LYRA_TTS_MODEL=tts-1
+LYRA_TTS_VOICE=shimmer
+LYRA_STT_MODEL=Systran/faster-whisper-large-v3
+LYRA_IMAGE_MODELS=
+EOF
 fi
 sed -i "s|^LYRA_CHAT_MODEL=.*|LYRA_CHAT_MODEL=$MODEL|" .env
-sed -i "s|^LYRA_FAST_MODEL=.*|LYRA_FAST_MODEL=$FAST|" .enw
+sed -i "s|^LYRA_FAST_MODEL=.*|LYRA_FAST_MODEL=$FAST|" .env
 
 echo "==> Démarrage de la pile"
 docker compose up -d --build
