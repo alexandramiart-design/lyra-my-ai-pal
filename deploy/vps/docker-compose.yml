@@ -1,0 +1,71 @@
+# Lyra — pile 100 % auto-hébergés sur une serveur Linux
+# Tout tourne en local : base de données, IA texte, voix, transcription.
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: lyra
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: lyra
+    volumes:
+      - db_data:/var/lib/postgresql/data
+      - ./schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    ports:
+      - "127.0.0.1:5432:5432"
+
+  # IA texte open source (OpenAI-compatible sur /v1)
+  ollama:
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    volumes:
+      - ollama_data:/root/.ollama
+    ports:
+      - "127.0.0.1:11434:11434"
+
+  # Transcription (Whisper open source, API OpenAI-compatible)
+  whisper:
+    image: fedirz/faster-whisper-server:latest-cpu
+    restart: unless-stopped
+    environment:
+      WHISPER__MODEL: Systran/faster-whisper-large-v3
+    volumes:
+      - whisper_data:/root/.cache/huggingface
+    ports:
+      - "127.0.0.1:8000:8000"
+
+  # Voix (Piper / Coqui XTTS via une API OpenAI-compatible)
+  tts:
+    image: ghcr.io/matatonic/openedai-speech-min:latest
+    restart: unless-stopped
+    volumes:
+      - tts_data:/app/voices
+    ports:
+      - "127.0.0.1:8001:8000"
+
+  # Passerelle unique : expose /v1/chat, /v1/audio/speech, /v1/audio/transcriptions
+  gateway:
+    image: nginx:alpine
+    restart: unless-stopped
+    depends_on: [ollama, whisper, tts]
+    volumes:
+      - ./gateway.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "127.0.0.1:8080:80"
+
+  # L'application Lyra elle-même
+  app:
+    build:
+      context: ../..
+      dockerfile: deploy/vps/Dockerfile
+    restart: unless-stopped
+    depends_on: [db, gateway]
+    env_file: .env
+    ports:
+      - "3000:3000"
+
+volumes:
+  db_data:
+  ollama_data:
+  whisper_data:
+  tts_data:
