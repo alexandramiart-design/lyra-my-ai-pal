@@ -1,7 +1,0 @@
-<?xml version='1.0' encoding='utf-8'?>
-<resources>
-    <string name="app_name">Lyra</string>
-    <string name="title_activity_main">Lyra</string>
-    <string name="package_name">app.lovable.lyra</string>
-    <string name="custom_url_scheme">app.lovable.lyra</string>
-</resources>

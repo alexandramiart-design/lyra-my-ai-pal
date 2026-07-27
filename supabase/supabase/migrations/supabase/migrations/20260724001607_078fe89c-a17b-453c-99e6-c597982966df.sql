@@ -1,1 +1,0 @@
-UPDATE public.web_messages SET user_id = '114d5b81-c49d-4d1c-991c-b67864359318' WHERE user_id = '00084fac-10f9-42c5-b016-2e074eb29c3c';

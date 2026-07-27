@@ -1,0 +1,1 @@
+ALTER TABLE public.user_profiles ADD COLUMN IF NOT EXISTS lyra_avatar_url text NOT NULL DEFAULT '';

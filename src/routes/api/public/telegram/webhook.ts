@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { createClient } from "@supabase/supabase-js";
 import { createHash, timingSafeEqual } from "crypto";
 import { buildLyraPrompt } from "@/lib/web-auth";
+import { loadUserMemories, formatMemoryBlock, updateUserMemories } from "@/lib/lyra-memory";
 
 const GATEWAY = "https://connector-gateway.lovable.dev/telegram";
 const AI_GATEWAY = "https://ai.gateway.lovable.dev/v1/chat/completions";
@@ -415,7 +416,17 @@ export const Route = createFileRoute("/api/public/telegram/webhook")({
             images: (r.images as string[]) ?? [],
           }));
 
-        const reply = await callLyra(history, systemPromptOverride ?? SYSTEM_PROMPT);
+        let basePrompt = systemPromptOverride ?? SYSTEM_PROMPT;
+        if (alexId) {
+          const memories = await loadUserMemories(supabase, alexId);
+          basePrompt += formatMemoryBlock(memories, displayName);
+        }
+        const reply = await callLyra(history, basePrompt);
+
+        const memKey = process.env.LOVABLE_API_KEY;
+        if (alexId && memKey) {
+          await updateUserMemories(memKey, supabase, alexId, rawText, reply);
+        }
 
         if (alexId) {
           await supabase.from("web_messages").insert({

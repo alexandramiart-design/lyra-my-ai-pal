@@ -1,11 +1,11 @@
 import { useEffect, useState } from "react";
-import { ArrowLeft, Check, Loader2, Send, Trash2, Upload } from "lucide-react";
-import { PRESET_AVATARS, THEMES, type ThemeId } from "@/lib/themes";
+import { ArrowLeft, Check, Github, Loader2, RefreshCw, Send, Trash2, Upload } from "lucide-react";
+import { THEME_LIST, getTheme, type ThemeId } from "@/lib/themes";
+import { avatarsFor, type Gender } from "@/lib/user-avatars";
 
 type Profile = {
   display_name: string;
-  gender: "male" | "female";
-  in_transition: boolean;
+  gender: Gender;
   avatar_url: string;
   theme: ThemeId;
   telegram_bot_username?: string | null;
@@ -16,12 +16,14 @@ export function SettingsPanel({
   token,
   apiUrl,
   initial,
+  isOwner,
   onClose,
   onSaved,
 }: {
   token: string;
   apiUrl: (p: string) => string;
   initial: Profile;
+  isOwner?: boolean;
   onClose: () => void;
   onSaved: (p: Profile) => void;
 }) {
@@ -53,7 +55,7 @@ export function SettingsPanel({
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col text-white"
-         style={{ background: THEMES[profile.theme].background }}>
+         style={{ background: getTheme(profile.theme).background }}>
       <div className="mx-auto flex h-full w-full max-w-md flex-col">
         <header className="flex items-center gap-2 px-4 pt-6 pb-3">
           <button onClick={onClose} className="flex h-10 w-10 items-center justify-center rounded-full bg-white/15 ring-1 ring-white/30">
@@ -84,24 +86,19 @@ export function SettingsPanel({
               </section>
               <section>
                 <p className="text-xs uppercase tracking-wider text-white/70">Genre</p>
-                <div className="mt-2 grid grid-cols-2 gap-2">
-                  {(["female", "male"] as const).map((g) => (
+                <div className="mt-2 grid grid-cols-3 gap-2">
+                  {(["female", "male", "nonbinary"] as const).map((g) => (
                     <button key={g} onClick={() => save({ gender: g })}
                       className={"rounded-2xl py-3 text-sm ring-2 " + (profile.gender === g ? "bg-white/30 ring-white" : "bg-white/10 ring-white/20")}>
-                      {g === "female" ? "Femme" : "Homme"}
+                      {g === "female" ? "Femme" : g === "male" ? "Homme" : "Non binaire"}
                     </button>
                   ))}
                 </div>
-                <label className="mt-3 flex items-center gap-2 text-sm">
-                  <input type="checkbox" checked={profile.in_transition}
-                    onChange={(e) => save({ in_transition: e.target.checked })} className="h-4 w-4" />
-                  Je suis en transition
-                </label>
               </section>
               <section>
                 <p className="text-xs uppercase tracking-wider text-white/70">Avatar</p>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {PRESET_AVATARS.map((url) => (
+                <div className="mt-2 grid grid-cols-5 gap-2">
+                  {avatarsFor(profile.gender).map((url) => (
                     <button key={url} onClick={() => save({ avatar_url: url })}
                       className={"h-14 w-14 overflow-hidden rounded-full ring-2 " + (profile.avatar_url === url ? "ring-white" : "ring-white/30")}>
                       <img src={url} alt="" className="h-full w-full object-cover bg-white/40" />
@@ -113,14 +110,11 @@ export function SettingsPanel({
                       onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); e.currentTarget.value = ""; }} />
                   </label>
                 </div>
-                {profile.avatar_url && (
-                  <img src={profile.avatar_url} alt="" className="mt-3 h-16 w-16 rounded-full object-cover ring-2 ring-white/60" />
-                )}
               </section>
               <section>
                 <p className="text-xs uppercase tracking-wider text-white/70">Ambiance</p>
                 <div className="mt-2 grid grid-cols-2 gap-2">
-                  {Object.values(THEMES).map((t) => (
+                  {THEME_LIST.map((t) => (
                     <button key={t.id} onClick={() => save({ theme: t.id })}
                       className={"overflow-hidden rounded-2xl ring-2 " + (profile.theme === t.id ? "ring-white" : "ring-white/20")}>
                       <div className="h-12 w-full" style={{ background: t.background }} />
@@ -132,6 +126,8 @@ export function SettingsPanel({
                   ))}
                 </div>
               </section>
+
+              {isOwner && <GithubBuildSection token={token} apiUrl={apiUrl} />}
             </div>
           )}
 
@@ -144,6 +140,84 @@ export function SettingsPanel({
         </div>
       </div>
     </div>
+  );
+}
+
+type Run = {
+  html_url: string; status: string; conclusion: string | null;
+  created_at: string; run_number: number;
+};
+
+function GithubBuildSection({ token, apiUrl }: { token: string; apiUrl: (p: string) => string }) {
+  const [run, setRun] = useState<Run | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  async function refresh() {
+    try {
+      const r = await fetch(apiUrl("/api/web/github-build"), { headers: { Authorization: `Bearer ${token}` } });
+      if (!r.ok) return;
+      const j = (await r.json()) as { run: Run | null };
+      setRun(j.run);
+    } catch {}
+  }
+
+  useEffect(() => {
+    refresh();
+    const t = setInterval(refresh, 15000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function launch() {
+    setBusy(true); setMsg(null);
+    try {
+      const r = await fetch(apiUrl("/api/web/github-build"), {
+        method: "POST", headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!r.ok) setMsg((await r.text()) || "Échec du lancement");
+      else {
+        setMsg("Build lancé 🚀");
+        setTimeout(refresh, 4000);
+      }
+    } catch (e) {
+      setMsg(String((e as Error).message));
+    }
+    setBusy(false);
+  }
+
+  const state = run
+    ? run.status !== "completed"
+      ? "En cours…"
+      : run.conclusion === "success"
+        ? "Réussi ✅"
+        : "Échoué ❌"
+    : "Aucun build";
+
+  return (
+    <section className="rounded-2xl bg-white/10 p-4 ring-1 ring-white/20">
+      <p className="flex items-center gap-2 text-sm font-semibold">
+        <Github className="h-4 w-4" /> Build APK (GitHub)
+      </p>
+      <p className="mt-1 text-xs text-white/75">
+        Dernier build : {run ? `#${run.run_number} — ${state}` : state}
+        {run && ` · ${new Date(run.created_at).toLocaleString("fr-FR")}`}
+      </p>
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <button onClick={launch} disabled={busy}
+          className="inline-flex items-center gap-2 rounded-full bg-white px-4 py-2 text-sm font-semibold text-pink-600 shadow disabled:opacity-60">
+          {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+          Relancer le build APK
+        </button>
+        {run && (
+          <a href={run.html_url} target="_blank" rel="noopener"
+            className="rounded-full bg-white/20 px-3 py-1.5 text-xs ring-1 ring-white/30">
+            Voir sur GitHub
+          </a>
+        )}
+      </div>
+      {msg && <p className="mt-2 text-xs text-white/90">{msg}</p>}
+    </section>
   );
 }
 

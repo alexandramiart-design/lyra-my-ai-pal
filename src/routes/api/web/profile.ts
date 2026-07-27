@@ -6,6 +6,7 @@ type ProfileInput = {
   gender?: string;
   in_transition?: boolean;
   avatar_url?: string;
+  lyra_avatar_url?: string;
   theme?: string;
   onboarded?: boolean;
 };
@@ -21,7 +22,7 @@ export const Route = createFileRoute("/api/web/profile")({
         const { data } = await sb
           .from("user_profiles")
           .select(
-            "display_name, gender, in_transition, avatar_url, theme, telegram_bot_username, telegram_status, telegram_chat_id, onboarded_at",
+            "display_name, gender, in_transition, avatar_url, lyra_avatar_url, theme, telegram_bot_username, telegram_status, telegram_chat_id, onboarded_at",
           )
           .eq("user_id", auth.userId)
           .maybeSingle();
@@ -38,6 +39,7 @@ export const Route = createFileRoute("/api/web/profile")({
         if (body.gender === "male" || body.gender === "female") patch.gender = body.gender;
         if (typeof body.in_transition === "boolean") patch.in_transition = body.in_transition;
         if (typeof body.avatar_url === "string") patch.avatar_url = body.avatar_url.slice(0, 500000);
+        if (typeof body.lyra_avatar_url === "string") patch.lyra_avatar_url = body.lyra_avatar_url.slice(0, 500000);
         if (typeof body.theme === "string") patch.theme = body.theme.slice(0, 20);
         if (body.onboarded) patch.onboarded_at = new Date().toISOString();
 

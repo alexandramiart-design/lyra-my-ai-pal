@@ -1,5 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { requireAuthenticated, serviceClient, buildLyraPrompt, webCorsPreflight, withWebCors } from "@/lib/web-auth";
+import { webSearch, formatSearchResults } from "@/lib/web-search";
+import { loadUserMemories, formatMemoryBlock, updateUserMemories } from "@/lib/lyra-memory";
 
 type Part = { type: "text"; text: string } | { type: "image_url"; image_url: { url: string } };
 
@@ -165,7 +167,10 @@ export const Route = createFileRoute("/api/web/chat")({
           .select("display_name, gender, in_transition")
           .eq("user_id", auth.userId)
           .maybeSingle();
-        const systemPrompt = buildLyraPrompt(profile ?? null, auth.email);
+        const memories = await loadUserMemories(sb, auth.userId);
+        const displayName = (profile?.display_name || "").trim() || "toi";
+        const systemPrompt =
+          buildLyraPrompt(profile ?? null, auth.email) + formatMemoryBlock(memories, displayName);
         // Save user message
         await sb.from("web_messages").insert({
           user_id: auth.userId,
@@ -201,11 +206,37 @@ export const Route = createFileRoute("/api/web/chat")({
           }
         }
 
-        const upstream = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "Lovable-API-Key": key },
-          body: JSON.stringify({ model: "google/gemini-3-flash-preview", stream: true, messages }),
-        });
+        const tools = [
+          {
+            type: "function",
+            function: {
+              name: "recherche_web",
+              description:
+                "Cherche sur Internet en temps réel. À utiliser dès que la réponse dépend de l'actualité, d'une date récente, de prix, d'horaires, de météo, de résultats sportifs, d'un site/produit précis, ou quand tu n'es pas sûre de toi.",
+              parameters: {
+                type: "object",
+                properties: {
+                  query: { type: "string", description: "La requête de recherche, courte et précise." },
+                },
+                required: ["query"],
+              },
+            },
+          },
+        ];
+
+        const askModel = (msgs: unknown[]) =>
+          fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "Lovable-API-Key": key },
+            body: JSON.stringify({
+              model: "google/gemini-3-flash-preview",
+              stream: true,
+              messages: msgs,
+              tools,
+            }),
+          });
+
+        const upstream = await askModel(messages);
 
         if (!upstream.ok || !upstream.body) {
           const t = await upstream.text().catch(() => "");
@@ -217,33 +248,76 @@ export const Route = createFileRoute("/api/web/chat")({
         let full = "";
         const stream = new ReadableStream({
           async start(controller) {
-            const reader = upstream.body!.getReader();
-            let buf = "";
             let holding = false; // once a "{" appears, buffer until the end (possible tool JSON)
             let held = "";
             try {
-              while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                buf += decoder.decode(value, { stream: true });
-                const lines = buf.split("\n");
-                buf = lines.pop() ?? "";
-                for (const line of lines) {
-                  const t = line.trim();
-                  if (!t.startsWith("data:")) continue;
-                  const payload = t.slice(5).trim();
-                  if (payload === "[DONE]") continue;
-                  try {
-                    const j = JSON.parse(payload);
-                    const delta = j.choices?.[0]?.delta?.content;
-                    if (typeof delta === "string" && delta) {
-                      full += delta;
-                      if (!holding && delta.includes("{")) holding = true;
-                      if (holding) held += delta;
-                      else controller.enqueue(encoder.encode(delta));
-                    }
-                  } catch {}
+              let response: Response = upstream;
+              for (let round = 0; round < 3; round++) {
+                const reader = response.body!.getReader();
+                let buf = "";
+                const toolCalls: { id: string; name: string; args: string }[] = [];
+                while (true) {
+                  const { done, value } = await reader.read();
+                  if (done) break;
+                  buf += decoder.decode(value, { stream: true });
+                  const lines = buf.split("\n");
+                  buf = lines.pop() ?? "";
+                  for (const line of lines) {
+                    const t = line.trim();
+                    if (!t.startsWith("data:")) continue;
+                    const payload = t.slice(5).trim();
+                    if (payload === "[DONE]") continue;
+                    try {
+                      const j = JSON.parse(payload);
+                      const d = j.choices?.[0]?.delta;
+                      const delta = d?.content;
+                      if (typeof delta === "string" && delta) {
+                        full += delta;
+                        if (!holding && delta.includes("{")) holding = true;
+                        if (holding) held += delta;
+                        else controller.enqueue(encoder.encode(delta));
+                      }
+                      const tcs = d?.tool_calls;
+                      if (Array.isArray(tcs)) {
+                        for (const tc of tcs) {
+                          const idx = typeof tc.index === "number" ? tc.index : toolCalls.length;
+                          if (!toolCalls[idx]) toolCalls[idx] = { id: tc.id || `call_${idx}`, name: "", args: "" };
+                          if (tc.id) toolCalls[idx].id = tc.id;
+                          if (tc.function?.name) toolCalls[idx].name = tc.function.name;
+                          if (tc.function?.arguments) toolCalls[idx].args += tc.function.arguments;
+                        }
+                      }
+                    } catch {}
+                  }
                 }
+
+                const calls = toolCalls.filter((c) => c && c.name === "recherche_web");
+                if (!calls.length) break;
+
+                messages.push({
+                  role: "assistant",
+                  content: "",
+                  tool_calls: calls.map((c) => ({
+                    id: c.id,
+                    type: "function",
+                    function: { name: c.name, arguments: c.args || "{}" },
+                  })),
+                } as never);
+                for (const c of calls) {
+                  let q = "";
+                  try { q = String(JSON.parse(c.args || "{}").query ?? ""); } catch { q = text; }
+                  // Signale à l'UI qu'une recherche Internet démarre (marqueur retiré côté client)
+                  controller.enqueue(encoder.encode(`[[LYRA_SEARCH:${(q || text).replace(/[\]\n]/g, " ").slice(0, 80)}]]`));
+                  const results = q ? await webSearch(q, 5) : [];
+                  controller.enqueue(encoder.encode("[[LYRA_SEARCH_END]]"));
+                  messages.push({
+                    role: "tool",
+                    tool_call_id: c.id,
+                    content: formatSearchResults(q || text, results),
+                  } as never);
+                }
+                response = await askModel(messages);
+                if (!response.ok || !response.body) break;
               }
             } finally {
               // The model sometimes emits a { "action": "generate_image", "prompt": "..." }
@@ -271,6 +345,7 @@ export const Route = createFileRoute("/api/web/chat")({
                   content: full,
                   images: dataUrl ? [dataUrl] : [],
                 });
+                await updateUserMemories(key, sb, auth.userId, text, full);
               }
               controller.close();
             }

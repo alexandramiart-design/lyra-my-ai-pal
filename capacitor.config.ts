@@ -4,11 +4,11 @@ const config: CapacitorConfig = {
   appId: 'app.lovable.lyra',
   appName: 'Lyra',
   webDir: 'dist',
+  // Vraie application native : tout le code de l'interface est embarqué
+  // dans l'APK (bundle `dist` généré par `bun run build:mobile`).
+  // Seuls les appels API (IA, voix, mémoire) partent vers le backend.
   server: {
-    // L'app native charge directement l'app web publiée.
-    // Ainsi, toute modif faite dans Lovable est instantanément dispo
-    // dans l'APK sans rebuild.
-    url: 'https://sweet-git-sparkle.lovable.app',
+    androidScheme: 'https',
     cleartext: false,
   },
   android: {

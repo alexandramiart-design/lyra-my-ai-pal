@@ -1,13 +1,11 @@
 import { useState } from "react";
-import { ChevronRight, LogOut, Settings, Send, X } from "lucide-react";
+import { ChevronRight, LogOut, Settings, X } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 
 export function SideNotch({
   onOpenSettings,
-  telegramLink,
 }: {
   onOpenSettings?: () => void;
-  telegramLink?: string | null;
 }) {
   const [open, setOpen] = useState(false);
 
@@ -38,22 +36,9 @@ export function SideNotch({
               <Settings className="h-4 w-4 text-white" />
             </IconBtn>
           )}
-          <IconBtn
-            label={telegramLink ? "Ouvrir mon bot Telegram" : "Configurer Telegram"}
-            onClick={() => {
-              if (telegramLink) window.open(telegramLink, "_blank", "noopener");
-              else { setOpen(false); onOpenSettings?.(); }
-            }}
-            bg="#229ED9"
-          >
-            <Send className="h-4 w-4 text-white" />
-          </IconBtn>
           <IconBtn label="Se déconnecter" onClick={signOut} bg="#ef4444">
             <LogOut className="h-4 w-4 text-white" />
           </IconBtn>
-          <p className="max-w-[9rem] px-1 pb-1 text-[10px] leading-tight text-white/90 text-center">
-            {telegramLink ? "Continue sur ton bot Telegram 💖" : "Ajoute ton propre bot Telegram"}
-          </p>
         </div>
       )}
     </>

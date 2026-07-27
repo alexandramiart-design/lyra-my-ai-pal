@@ -1,89 +1,64 @@
-export type ThemeId = "pink" | "lilac" | "ocean" | "forest" | "sunset" | "mono";
-
 export type ThemeDef = {
-  id: ThemeId;
+  id: string;
   label: string;
-  swatch: string[];
   background: string;
   bubblePrimary: string;
   callGradient: string;
 };
 
-export const THEMES: Record<ThemeId, ThemeDef> = {
-  pink: {
-    id: "pink",
-    label: "Rose sucré",
-    swatch: ["#ff4fa3", "#ff69b4", "#d259e6", "#7b3fe4"],
-    background:
-      "radial-gradient(1200px 800px at 10% 0%, #ffb3d1 0%, transparent 55%)," +
-      "radial-gradient(1000px 700px at 90% 20%, #ff7ab8 0%, transparent 55%)," +
-      "radial-gradient(900px 800px at 50% 100%, #b06cf5 0%, transparent 60%)," +
-      "linear-gradient(160deg, #ff4fa3 0%, #ff69b4 35%, #d259e6 70%, #7b3fe4 100%)",
-    bubblePrimary: "#ec4899",
-    callGradient: "radial-gradient(circle at 50% 30%, #ff7ab8, #a63fe4 60%, #4a1a7a 100%)",
-  },
-  lilac: {
-    id: "lilac",
-    label: "Lilas nuit",
-    swatch: ["#8b5cf6", "#6366f1", "#4f46e5", "#1e1b4b"],
-    background:
-      "radial-gradient(1000px 700px at 20% 10%, #a78bfa 0%, transparent 55%)," +
-      "radial-gradient(900px 700px at 80% 80%, #4338ca 0%, transparent 60%)," +
-      "linear-gradient(160deg, #6366f1 0%, #4f46e5 40%, #312e81 100%)",
-    bubblePrimary: "#6366f1",
-    callGradient: "radial-gradient(circle at 50% 30%, #a78bfa, #4338ca 60%, #1e1b4b 100%)",
-  },
-  ocean: {
-    id: "ocean",
-    label: "Océan calme",
-    swatch: ["#06b6d4", "#0ea5e9", "#0369a1", "#082f49"],
-    background:
-      "radial-gradient(1000px 700px at 15% 0%, #67e8f9 0%, transparent 55%)," +
-      "radial-gradient(900px 700px at 85% 90%, #0369a1 0%, transparent 60%)," +
-      "linear-gradient(160deg, #0ea5e9 0%, #0369a1 55%, #0c4a6e 100%)",
-    bubblePrimary: "#0ea5e9",
-    callGradient: "radial-gradient(circle at 50% 30%, #67e8f9, #0369a1 60%, #082f49 100%)",
-  },
-  forest: {
-    id: "forest",
-    label: "Forêt douce",
-    swatch: ["#10b981", "#059669", "#065f46", "#022c22"],
-    background:
-      "radial-gradient(1000px 700px at 20% 0%, #6ee7b7 0%, transparent 55%)," +
-      "radial-gradient(900px 700px at 80% 90%, #065f46 0%, transparent 60%)," +
-      "linear-gradient(160deg, #10b981 0%, #047857 55%, #064e3b 100%)",
-    bubblePrimary: "#059669",
-    callGradient: "radial-gradient(circle at 50% 30%, #6ee7b7, #047857 60%, #022c22 100%)",
-  },
-  sunset: {
-    id: "sunset",
-    label: "Coucher de soleil",
-    swatch: ["#f97316", "#ef4444", "#b91c1c", "#7c2d12"],
-    background:
-      "radial-gradient(1000px 700px at 10% 10%, #fdba74 0%, transparent 55%)," +
-      "radial-gradient(900px 700px at 90% 80%, #b91c1c 0%, transparent 60%)," +
-      "linear-gradient(160deg, #f97316 0%, #ef4444 45%, #7c2d12 100%)",
-    bubblePrimary: "#ea580c",
-    callGradient: "radial-gradient(circle at 50% 30%, #fdba74, #b91c1c 60%, #7c2d12 100%)",
-  },
-  mono: {
-    id: "mono",
-    label: "Nuit graphite",
-    swatch: ["#374151", "#1f2937", "#111827", "#030712"],
-    background:
-      "radial-gradient(1000px 700px at 20% 10%, #4b5563 0%, transparent 55%)," +
-      "radial-gradient(900px 700px at 80% 90%, #030712 0%, transparent 60%)," +
-      "linear-gradient(160deg, #374151 0%, #1f2937 55%, #030712 100%)",
-    bubblePrimary: "#4b5563",
-    callGradient: "radial-gradient(circle at 50% 30%, #6b7280, #1f2937 60%, #030712 100%)",
-  },
-};
+export type ThemeId = string;
 
-export const PRESET_AVATARS = [
-  "https://api.dicebear.com/9.x/adventurer/svg?seed=Luna&backgroundType=gradientLinear",
-  "https://api.dicebear.com/9.x/adventurer/svg?seed=Nova&backgroundType=gradientLinear",
-  "https://api.dicebear.com/9.x/adventurer/svg?seed=Iris&backgroundType=gradientLinear",
-  "https://api.dicebear.com/9.x/adventurer/svg?seed=Milo&backgroundType=gradientLinear",
-  "https://api.dicebear.com/9.x/adventurer/svg?seed=Sacha&backgroundType=gradientLinear",
-  "https://api.dicebear.com/9.x/adventurer/svg?seed=Zoe&backgroundType=gradientLinear",
+function mk(
+  id: string,
+  label: string,
+  a: string,
+  b: string,
+  c: string,
+  d: string,
+  bubble: string,
+): ThemeDef {
+  return {
+    id,
+    label,
+    background:
+      `radial-gradient(1100px 780px at 12% -5%, ${a} 0%, transparent 58%),` +
+      `radial-gradient(900px 700px at 92% 12%, ${b} 0%, transparent 55%),` +
+      `radial-gradient(1000px 900px at 50% 108%, ${c} 0%, transparent 62%),` +
+      `linear-gradient(160deg, ${b} 0%, ${c} 45%, ${d} 100%)`,
+    bubblePrimary: bubble,
+    callGradient: `radial-gradient(circle at 50% 28%, ${a}, ${c} 58%, ${d} 100%)`,
+  };
+}
+
+export const THEME_LIST: ThemeDef[] = [
+  mk("neon-cyber", "Neon Cyber", "#22d3ee", "#6366f1", "#7c3aed", "#0b0620", "#6d28d9"),
+  mk("holo-magenta", "Holo Magenta", "#f472b6", "#a21caf", "#6d28d9", "#150421", "#a21caf"),
+  mk("quantum-blue", "Quantum Blue", "#38bdf8", "#2563eb", "#1e1b4b", "#020617", "#2563eb"),
+  mk("plasma-orbit", "Plasma Orbit", "#fb7185", "#e11d48", "#7e22ce", "#1a032a", "#be123c"),
+  mk("aurora-x", "Aurora X", "#5eead4", "#22d3ee", "#4338ca", "#04121f", "#0d9488"),
+  mk("void-signal", "Void Signal", "#a78bfa", "#4c1d95", "#1e1b4b", "#05020f", "#5b21b6"),
+  mk("solar-flux", "Solar Flux", "#fbbf24", "#f97316", "#b91c1c", "#1a0705", "#ea580c"),
+  mk("ion-mint", "Ion Mint", "#6ee7b7", "#10b981", "#065f46", "#02120c", "#059669"),
+  mk("hyperdrive", "Hyperdrive", "#c084fc", "#7c3aed", "#1d4ed8", "#060420", "#7c3aed"),
+  mk("nebula-rose", "Nebula Rose", "#fda4af", "#f43f5e", "#7c3aed", "#170524", "#e11d48"),
+  mk("chrome-noir", "Chrome Noir", "#94a3b8", "#334155", "#0f172a", "#010409", "#475569"),
+  mk("laser-lime", "Laser Lime", "#bef264", "#65a30d", "#155e75", "#03121a", "#4d7c0f"),
+  mk("deep-space", "Deep Space", "#818cf8", "#312e81", "#0f172a", "#000004", "#4338ca"),
+  mk("titan-copper", "Titan Copper", "#fdba74", "#c2410c", "#7c2d12", "#160604", "#c2410c"),
+  mk("synthwave", "Synthwave", "#f0abfc", "#d946ef", "#1d4ed8", "#0d0326", "#c026d3"),
+  mk("arctic-core", "Arctic Core", "#e0f2fe", "#7dd3fc", "#0369a1", "#041b2d", "#0284c7"),
+  mk("bio-lumen", "Bio Lumen", "#a3e635", "#14b8a6", "#0f766e", "#02100f", "#0d9488"),
+  mk("crimson-grid", "Crimson Grid", "#f87171", "#dc2626", "#450a0a", "#0b0202", "#dc2626"),
+  mk("astral-gold", "Astral Gold", "#fde68a", "#d97706", "#4c1d95", "#100617", "#b45309"),
+  mk("phantom-teal", "Phantom Teal", "#2dd4bf", "#0891b2", "#164e63", "#020c12", "#0891b2"),
 ];
+
+export const THEMES: Record<string, ThemeDef> = Object.fromEntries(
+  THEME_LIST.map((t) => [t.id, t]),
+);
+
+export const DEFAULT_THEME_ID = THEME_LIST[0].id;
+
+export function getTheme(id?: string | null): ThemeDef {
+  return (id && THEMES[id]) || THEME_LIST[0];
+}

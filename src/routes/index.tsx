@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
-import { Phone, PhoneOff, Mic, Send, Volume2, Trash2, Sparkles, ImagePlus, X, Speaker, Bluetooth, Check, Download } from "lucide-react";
+import { Phone, PhoneOff, Mic, Send, Volume2, Trash2, Sparkles, ImagePlus, X, Speaker, Bluetooth, Check, Download, Globe } from "lucide-react";
 import { downloadImage, FORMAT_LABELS, type ImageFormat } from "@/lib/image-download";
 import { supabase } from "@/integrations/supabase/client";
 import { lovable } from "@/integrations/lovable";
@@ -8,8 +8,10 @@ import type { Session } from "@supabase/supabase-js";
 import { SideNotch } from "@/components/side-notch";
 import { Onboarding } from "@/components/onboarding";
 import { SettingsPanel } from "@/components/settings-panel";
-import { THEMES, type ThemeId } from "@/lib/themes";
+import { getTheme, type ThemeId } from "@/lib/themes";
+import { LYRA_AVATARS, DEFAULT_LYRA_AVATAR } from "@/lib/lyra-avatars";
 import { hasNativeAudioRouter, listNativeOutputs, setNativeOutput, resetNativeOutput, type NativeAudioKind } from "@/lib/audio-router";
+import { streamSpeech, type SpeakHandle } from "@/lib/tts-stream";
 import lyraAvatarAsset from "@/assets/lyra-avatar.png.asset.json";
 import userAvatarAsset from "@/assets/user-avatar.png.asset.json";
 const lyraAvatar = lyraAvatarAsset.url;
@@ -164,9 +166,9 @@ type Msg = { id: string; role: "user" | "assistant"; content: string; images?: s
 
 type ServerProfile = {
   display_name: string;
-  gender: "male" | "female";
-  in_transition: boolean;
+  gender: "male" | "female" | "nonbinary";
   avatar_url: string;
+  lyra_avatar_url?: string;
   theme: ThemeId;
   telegram_bot_username?: string | null;
   telegram_status?: string | null;
@@ -187,6 +189,7 @@ export function Page() {
 
   useEffect(() => {
     if (!session) { setProfile(null); setProfileLoaded(false); return; }
+    void import("@/lib/native-permissions").then((m) => m.requestAllNativePermissions());
     (async () => {
       const r = await fetch(apiUrl("/api/web/profile"), {
         headers: { Authorization: `Bearer ${session.access_token}` },
@@ -249,8 +252,8 @@ export function Page() {
     ? {
         display_name: profile?.display_name || "Alexandra",
         gender: profile?.gender ?? "female",
-        in_transition: profile?.in_transition ?? false,
         avatar_url: profile?.avatar_url || alexandraAvatar,
+        lyra_avatar_url: profile?.lyra_avatar_url || "",
         theme: profile?.theme ?? "pink",
         telegram_bot_username: profile?.telegram_bot_username ?? null,
         telegram_status: profile?.telegram_status ?? "idle",
@@ -268,8 +271,8 @@ export function Page() {
   );
 }
 
-function Shell({ children, theme = "pink" }: { children: React.ReactNode; theme?: ThemeId }) {
-  const t = THEMES[theme] ?? THEMES.pink;
+function Shell({ children, theme }: { children: React.ReactNode; theme?: ThemeId }) {
+  const t = getTheme(theme);
   return (
     <div className="h-[100dvh] w-full text-white relative overflow-hidden"
          style={{ background: t.background }}>
@@ -334,6 +337,17 @@ function Chat({
   onProfileUpdated: (p: ServerProfile) => void;
 }) {
   const userAvatar = profile.avatar_url || null;
+  const lyraPic = profile.lyra_avatar_url || lyraAvatar;
+  const [lyraMenuOpen, setLyraMenuOpen] = useState(false);
+  async function saveLyraAvatar(url: string) {
+    setLyraMenuOpen(false);
+    onProfileUpdated({ ...profile, lyra_avatar_url: url });
+    await fetch(apiUrl("/api/web/profile"), {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ lyra_avatar_url: url }),
+    });
+  }
   const displayName = profile.display_name || "Toi";
   const theme = profile.theme;
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -342,12 +356,14 @@ function Chat({
   const [pendingImgs, setPendingImgs] = useState<string[]>([]);
   const [sending, setSending] = useState(false);
   const [imageGenerating, setImageGenerating] = useState(false);
+  const [searchQuery, setSearchQuery] = useState<string | null>(null);
   const [recording, setRecording] = useState(false);
   const [inCall, setInCall] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const speakQueueRef = useRef<Promise<void>>(Promise.resolve());
   const speakCancelRef = useRef(false);
+  const streamHandleRef = useRef<SpeakHandle | null>(null);
   const [audioOutputs, setAudioOutputs] = useState<AudioOutput[]>([]);
   const [audioOutputId, setAudioOutputId] = useState<string>("default");
 
@@ -387,6 +403,7 @@ function Chat({
     if (!text.trim() && imgs.length === 0) return;
     setSending(true);
     setImageGenerating(imgs.length === 0 && isImageRequest(text));
+    setSearchQuery(null);
     const localUser: Msg = { id: crypto.randomUUID(), role: "user", content: text, images: imgs };
     setMsgs((m) => [...m, localUser]);
     setInput(""); setPendingImgs([]);
@@ -401,6 +418,7 @@ function Chat({
       setMsgs((m) => [...m, { id: crypto.randomUUID(), role: "assistant", content: `❌ ${err.slice(0, 200)}` }]);
       setSending(false);
       setImageGenerating(false);
+      setSearchQuery(null);
       return "";
     }
     const assistantId = crypto.randomUUID();
@@ -429,7 +447,13 @@ function Chat({
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
-      const chunk = decoder.decode(value, { stream: true });
+      let chunk = decoder.decode(value, { stream: true });
+      // Marqueurs de recherche Internet envoyés par le serveur
+      const startMatch = chunk.match(/\[\[LYRA_SEARCH:([^\]]*)\]\]/);
+      if (startMatch) setSearchQuery(startMatch[1].trim());
+      if (chunk.includes("[[LYRA_SEARCH_END]]")) setSearchQuery(null);
+      chunk = chunk.replace(/\[\[LYRA_SEARCH:[^\]]*\]\]/g, "").replace(/\[\[LYRA_SEARCH_END\]\]/g, "");
+      if (!chunk) continue;
       full += chunk;
       setMsgs((m) => m.map((x) => x.id === assistantId ? { ...x, content: full } : x));
       flushSentences();
@@ -437,6 +461,7 @@ function Chat({
     flushSentences(true);
     setSending(false);
     setImageGenerating(false);
+    setSearchQuery(null);
     if (res.headers.get("X-Lyra-Image") === "1") {
       try {
         const r = await fetch(apiUrl("/api/web/history"), { headers: authH });
@@ -506,7 +531,7 @@ function Chat({
   async function fetchTts(text: string): Promise<Blob | null> {
     const r = await fetch(apiUrl("/api/web/tts"), {
       method: "POST", headers: { "Content-Type": "application/json", ...authH },
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ text, stream: false }),
     });
     if (!r.ok) return null;
     const buf = await r.arrayBuffer();
@@ -526,20 +551,43 @@ function Chat({
       a.onerror = () => { URL.revokeObjectURL(url); res(); };
     });
   }
+  function playTinyUnlockSound() {
+    const AC: typeof AudioContext | undefined = typeof window !== "undefined"
+      ? (window.AudioContext || (window as any).webkitAudioContext)
+      : undefined;
+    if (!AC) return;
+    try {
+      const ctx = new AC({ sampleRate: 24000 });
+      if (ctx.state === "suspended") ctx.resume().catch(() => {});
+      const buffer = ctx.createBuffer(1, 1, 24000);
+      const source = ctx.createBufferSource();
+      source.buffer = buffer;
+      source.connect(ctx.destination);
+      source.start(ctx.currentTime);
+      window.setTimeout(() => ctx.close().catch(() => {}), 120);
+    } catch {}
+  }
   async function speak(text: string): Promise<void> {
-    const blob = await fetchTts(text);
-    if (!blob) return;
     if (audioRef.current) { try { audioRef.current.pause(); } catch {} }
-    await playBlob(blob);
+    streamHandleRef.current?.stop();
+    const h = streamSpeech(apiUrl("/api/web/tts"), authH, text, audioOutputId ? resolveSinkId(audioOutputId) : undefined);
+    streamHandleRef.current = h;
+    try {
+      await h.done;
+    } catch {
+      const blob = await fetchTts(text);
+      if (blob) await playBlob(blob);
+    }
+  }
+  function speakNow(text: string) {
+    playTinyUnlockSound();
+    speak(text).catch(() => {});
   }
   function enqueueSpeak(text: string) {
     if (speakCancelRef.current) return;
-    const blobPromise = fetchTts(text);
     speakQueueRef.current = speakQueueRef.current.then(async () => {
       if (speakCancelRef.current) return;
-      const b = await blobPromise;
-      if (!b || speakCancelRef.current) return;
-      await playBlob(b);
+      await speak(text);
     });
   }
   function resetSpeakQueue() {
@@ -675,6 +723,8 @@ function Chat({
     setInCall(false);
     speakCancelRef.current = true;
     audioRef.current?.pause();
+    streamHandleRef.current?.stop();
+    streamHandleRef.current = null;
     releaseWakeLock();
     if (keepAliveRef.current) { clearInterval(keepAliveRef.current); keepAliveRef.current = null; }
     if (deviceChangeHandlerRef.current) {
@@ -692,12 +742,44 @@ function Chat({
   return (
     <Shell theme={theme}>
       <header className="shrink-0 flex items-center justify-between px-4 pt-4 pb-2">
-        <div className="flex items-center gap-2">
-          <img src={lyraAvatar} alt="Lyra" className="h-10 w-10 rounded-full object-cover ring-2 ring-white/60 shadow-md" />
+        <div className="relative flex items-center gap-2">
+          <button onClick={() => setLyraMenuOpen((v) => !v)} title="Changer l'avatar de Lyra"
+            className="relative h-10 w-10 shrink-0 rounded-full ring-2 ring-white/60 shadow-md active:scale-95 transition">
+            <img src={lyraPic} alt="Lyra" className="h-full w-full rounded-full object-cover" />
+            <span className="absolute -bottom-0.5 -right-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-white/90 text-[9px] text-pink-600">✎</span>
+          </button>
           <div>
             <p className="text-sm font-semibold leading-none">Lyra</p>
             <p className="text-[11px] text-white/80">En ligne pour {displayName}</p>
           </div>
+          {lyraMenuOpen && (
+            <>
+              <div className="fixed inset-0 z-30" onClick={() => setLyraMenuOpen(false)} />
+              <div className="absolute left-0 top-12 z-40 w-64 rounded-2xl bg-white/15 p-3 backdrop-blur-xl ring-1 ring-white/30 shadow-xl">
+                <p className="mb-2 text-[11px] uppercase tracking-wider text-white/70">Avatar de Lyra</p>
+                <div className="grid grid-cols-4 gap-2">
+                  {LYRA_AVATARS.map((url) => (
+                    <button key={url} onClick={() => saveLyraAvatar(url)}
+                      className={"h-12 w-12 overflow-hidden rounded-full ring-2 transition " + (lyraPic === url ? "ring-white scale-105" : "ring-white/30")}>
+                      <img src={url} alt="" className="h-full w-full object-cover bg-white/30" />
+                    </button>
+                  ))}
+                  <label className="flex h-12 w-12 cursor-pointer items-center justify-center rounded-full bg-white/25 ring-2 ring-white/40">
+                    <ImagePlus className="h-4 w-4" />
+                    <input type="file" accept="image/*" className="hidden"
+                      onChange={(e) => {
+                        const f = e.target.files?.[0];
+                        e.currentTarget.value = "";
+                        if (!f || f.size > 4_000_000) return;
+                        const rd = new FileReader();
+                        rd.onload = () => saveLyraAvatar(String(rd.result || ""));
+                        rd.readAsDataURL(f);
+                      }} />
+                  </label>
+                </div>
+              </div>
+            </>
+          )}
         </div>
         <div className="flex items-center gap-1">
           <button onClick={() => startCall()} title="Appel"
@@ -719,12 +801,27 @@ function Chat({
           </div>
         )}
         {msgs.map((m) => (
-          <Bubble key={m.id} m={m} onSpeak={() => speak(m.content)} userAvatar={userAvatar} />
+          <Bubble key={m.id} m={m} onSpeak={() => speakNow(m.content)} userAvatar={userAvatar} lyraAvatarSrc={lyraPic} />
         ))}
         {sending && (
           <div className="flex items-end gap-2 pl-1 justify-start">
-            <img src={lyraAvatar} alt="" className="h-7 w-7 shrink-0 rounded-full object-cover ring-1 ring-white/40" />
-            {imageGenerating ? (
+            <img src={lyraPic} alt="" className="h-7 w-7 shrink-0 rounded-full object-cover ring-1 ring-white/40" />
+            {searchQuery !== null ? (
+              <div className="bg-white/20 px-4 py-2 text-xs text-white/90 backdrop-blur ring-1 ring-white/30 rounded-3xl rounded-bl-md">
+                <span className="flex items-center gap-2">
+                  <Globe className="h-3.5 w-3.5 animate-spin [animation-duration:2.5s]" />
+                  <span>
+                    je cherche sur Internet
+                    {searchQuery ? <span className="opacity-70"> « {searchQuery} »</span> : null}…
+                  </span>
+                  <span className="ml-1 flex items-center gap-1">
+                    <span className="h-1 w-1 rounded-full bg-white animate-pulse" style={{ animationDelay: "0ms" }} />
+                    <span className="h-1 w-1 rounded-full bg-white animate-pulse" style={{ animationDelay: "180ms" }} />
+                    <span className="h-1 w-1 rounded-full bg-white animate-pulse" style={{ animationDelay: "360ms" }} />
+                  </span>
+                </span>
+              </div>
+            ) : imageGenerating ? (
               <div className="bg-white/20 px-4 py-2 text-xs text-white/90 backdrop-blur ring-1 ring-white/30 rounded-3xl rounded-bl-md">
                 <span className="flex items-center gap-2">
                   <ImagePlus className="h-3.5 w-3.5 animate-pulse" />
@@ -796,6 +893,7 @@ function Chat({
         <CallOverlay
           onEnd={endCall}
           theme={theme}
+          lyraAvatarSrc={lyraPic}
           outputs={audioOutputs}
           outputId={audioOutputId}
           onSelectOutput={(id) => {
@@ -813,21 +911,13 @@ function Chat({
           }}
         />
       )}
-      <SideNotch
-        onOpenSettings={() => setSettingsOpen(true)}
-        telegramLink={
-          profile.telegram_bot_username
-            ? `https://t.me/${profile.telegram_bot_username}`
-            : isOwner
-              ? "https://t.me/Iahtbot"
-              : null
-        }
-      />
+      <SideNotch onOpenSettings={() => setSettingsOpen(true)} />
       {settingsOpen && (
         <SettingsPanel
           token={token}
           apiUrl={apiUrl}
           initial={profile}
+          isOwner={isOwner}
           onClose={() => setSettingsOpen(false)}
           onSaved={(p) => onProfileUpdated(p)}
         />
@@ -970,16 +1060,16 @@ function ImageWithDownload({ src }: { src: string }) {
   );
 }
 
-function Bubble({ m, onSpeak, userAvatar }: { m: Msg; onSpeak: () => void; userAvatar: string | null }) {
+function Bubble({ m, onSpeak, userAvatar, lyraAvatarSrc }: { m: Msg; onSpeak: () => void; userAvatar: string | null; lyraAvatarSrc: string }) {
   const isUser = m.role === "user";
   // Supprime les mini-bulles vides de Lyra pendant la génération d'image / streaming initial.
   if (!isUser && !m.content.trim() && (!m.images || m.images.length === 0)) return null;
-  const avatar = isUser ? userAvatar : lyraAvatar;
+  const avatar = isUser ? userAvatar : lyraAvatarSrc;
   return (
 
     <div className={"flex items-end gap-2 " + (isUser ? "justify-end" : "justify-start")}>
       {!isUser && (
-        <img src={lyraAvatar} alt="Lyra" className="h-7 w-7 shrink-0 rounded-full object-cover ring-1 ring-white/40" />
+        <img src={lyraAvatarSrc} alt="Lyra" className="h-7 w-7 shrink-0 rounded-full object-cover ring-1 ring-white/40" />
       )}
       <div className={"group max-w-[75%] rounded-3xl px-4 py-2.5 text-sm shadow-md " +
         (isUser
@@ -1014,18 +1104,20 @@ function OutputIcon({ kind }: { kind: AudioOutput["kind"] }) {
 
 function CallOverlay({
   onEnd,
-  theme = "pink",
+  theme,
+  lyraAvatarSrc = DEFAULT_LYRA_AVATAR,
   outputs,
   outputId,
   onSelectOutput,
 }: {
   onEnd: () => void;
   theme?: ThemeId;
+  lyraAvatarSrc?: string;
   outputs: AudioOutput[];
   outputId: string;
   onSelectOutput: (id: string) => void;
 }) {
-  const t = THEMES[theme] ?? THEMES.pink;
+  const t = getTheme(theme);
   const [pickerOpen, setPickerOpen] = useState(false);
   const current = outputs.find((o) => o.deviceId === outputId);
   const currentLabel = current?.label || (outputId === "default" ? "Haut-parleur du téléphone" : "Sortie audio");
@@ -1038,7 +1130,7 @@ function CallOverlay({
       <div className="relative">
         <div className="absolute inset-0 rounded-full bg-white/20 blur-2xl animate-pulse" />
         <div className="relative flex h-40 w-40 items-center justify-center overflow-hidden rounded-full bg-white/20 backdrop-blur ring-4 ring-white/40">
-          <img src={lyraAvatar} alt="Lyra" className="h-full w-full object-cover" />
+          <img src={lyraAvatarSrc} alt="Lyra" className="h-full w-full object-cover" />
         </div>
       </div>
       <p className="mt-8 text-2xl font-semibold">Lyra</p>

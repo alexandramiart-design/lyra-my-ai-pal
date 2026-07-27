@@ -16,6 +16,7 @@ import { Route as ApiWebTranscribeRouteImport } from './routes/api/web/transcrib
 import { Route as ApiWebTelegramSetupRouteImport } from './routes/api/web/telegram-setup'
 import { Route as ApiWebProfileRouteImport } from './routes/api/web/profile'
 import { Route as ApiWebHistoryRouteImport } from './routes/api/web/history'
+import { Route as ApiWebGithubBuildRouteImport } from './routes/api/web/github-build'
 import { Route as ApiWebChatRouteImport } from './routes/api/web/chat'
 import { Route as ApiPublicTelegramWebhookRouteImport } from './routes/api/public/telegram/webhook'
 
@@ -54,6 +55,11 @@ const ApiWebHistoryRoute = ApiWebHistoryRouteImport.update({
   path: '/api/web/history',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiWebGithubBuildRoute = ApiWebGithubBuildRouteImport.update({
+  id: '/api/web/github-build',
+  path: '/api/web/github-build',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiWebChatRoute = ApiWebChatRouteImport.update({
   id: '/api/web/chat',
   path: '/api/web/chat',
@@ -70,6 +76,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/auth/native-callback': typeof AuthNativeCallbackRoute
   '/api/web/chat': typeof ApiWebChatRoute
+  '/api/web/github-build': typeof ApiWebGithubBuildRoute
   '/api/web/history': typeof ApiWebHistoryRoute
   '/api/web/profile': typeof ApiWebProfileRoute
   '/api/web/telegram-setup': typeof ApiWebTelegramSetupRoute
@@ -81,6 +88,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/auth/native-callback': typeof AuthNativeCallbackRoute
   '/api/web/chat': typeof ApiWebChatRoute
+  '/api/web/github-build': typeof ApiWebGithubBuildRoute
   '/api/web/history': typeof ApiWebHistoryRoute
   '/api/web/profile': typeof ApiWebProfileRoute
   '/api/web/telegram-setup': typeof ApiWebTelegramSetupRoute
@@ -93,6 +101,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/auth/native-callback': typeof AuthNativeCallbackRoute
   '/api/web/chat': typeof ApiWebChatRoute
+  '/api/web/github-build': typeof ApiWebGithubBuildRoute
   '/api/web/history': typeof ApiWebHistoryRoute
   '/api/web/profile': typeof ApiWebProfileRoute
   '/api/web/telegram-setup': typeof ApiWebTelegramSetupRoute
@@ -106,6 +115,7 @@ export interface FileRouteTypes {
     | '/'
     | '/auth/native-callback'
     | '/api/web/chat'
+    | '/api/web/github-build'
     | '/api/web/history'
     | '/api/web/profile'
     | '/api/web/telegram-setup'
@@ -117,6 +127,7 @@ export interface FileRouteTypes {
     | '/'
     | '/auth/native-callback'
     | '/api/web/chat'
+    | '/api/web/github-build'
     | '/api/web/history'
     | '/api/web/profile'
     | '/api/web/telegram-setup'
@@ -128,6 +139,7 @@ export interface FileRouteTypes {
     | '/'
     | '/auth/native-callback'
     | '/api/web/chat'
+    | '/api/web/github-build'
     | '/api/web/history'
     | '/api/web/profile'
     | '/api/web/telegram-setup'
@@ -140,6 +152,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AuthNativeCallbackRoute: typeof AuthNativeCallbackRoute
   ApiWebChatRoute: typeof ApiWebChatRoute
+  ApiWebGithubBuildRoute: typeof ApiWebGithubBuildRoute
   ApiWebHistoryRoute: typeof ApiWebHistoryRoute
   ApiWebProfileRoute: typeof ApiWebProfileRoute
   ApiWebTelegramSetupRoute: typeof ApiWebTelegramSetupRoute
@@ -199,6 +212,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiWebHistoryRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/web/github-build': {
+      id: '/api/web/github-build'
+      path: '/api/web/github-build'
+      fullPath: '/api/web/github-build'
+      preLoaderRoute: typeof ApiWebGithubBuildRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/web/chat': {
       id: '/api/web/chat'
       path: '/api/web/chat'
@@ -220,6 +240,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AuthNativeCallbackRoute: AuthNativeCallbackRoute,
   ApiWebChatRoute: ApiWebChatRoute,
+  ApiWebGithubBuildRoute: ApiWebGithubBuildRoute,
   ApiWebHistoryRoute: ApiWebHistoryRoute,
   ApiWebProfileRoute: ApiWebProfileRoute,
   ApiWebTelegramSetupRoute: ApiWebTelegramSetupRoute,

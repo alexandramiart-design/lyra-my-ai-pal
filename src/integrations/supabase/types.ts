@@ -59,6 +59,36 @@ export type Database = {
         }
         Relationships: []
       }
+      user_memories: {
+        Row: {
+          category: string
+          created_at: string
+          fact: string
+          id: string
+          updated_at: string
+          user_id: string
+          weight: number
+        }
+        Insert: {
+          category?: string
+          created_at?: string
+          fact: string
+          id?: string
+          updated_at?: string
+          user_id: string
+          weight?: number
+        }
+        Update: {
+          category?: string
+          created_at?: string
+          fact?: string
+          id?: string
+          updated_at?: string
+          user_id?: string
+          weight?: number
+        }
+        Relationships: []
+      }
       user_profiles: {
         Row: {
           avatar_url: string
@@ -66,6 +96,7 @@ export type Database = {
           display_name: string
           gender: string
           in_transition: boolean
+          lyra_avatar_url: string
           onboarded_at: string | null
           telegram_bot_token: string | null
           telegram_bot_username: string | null
@@ -82,6 +113,7 @@ export type Database = {
           display_name?: string
           gender?: string
           in_transition?: boolean
+          lyra_avatar_url?: string
           onboarded_at?: string | null
           telegram_bot_token?: string | null
           telegram_bot_username?: string | null
@@ -98,6 +130,7 @@ export type Database = {
           display_name?: string
           gender?: string
           in_transition?: boolean
+          lyra_avatar_url?: string
           onboarded_at?: string | null
           telegram_bot_token?: string | null
           telegram_bot_username?: string | null
